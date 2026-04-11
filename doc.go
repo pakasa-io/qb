@@ -1,6 +1,7 @@
-// Package qb contains the public API surface for the qb module.
+// Package qb defines a database-agnostic query model for filtering, sorting,
+// and pagination.
 //
-// This repository is scaffolded for a public package: module metadata,
-// package documentation, tests, and CI are in place so the implementation can
-// grow without rearranging the project layout.
+// The core package is intentionally small and dependency-free. It owns only the
+// semantic query AST and a fluent builder. Input parsers and output adapters are
+// expected to live in separate packages and depend on qb, but not on each other.
 package qb
