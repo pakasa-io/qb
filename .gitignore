@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# JetBrains IDEs
+.idea/
+*.iml
+out/
+
+# Go build and test artifacts
+bin/
+dist/
+coverage.out
+coverage.html
+*.coverprofile
+*.test
+*.out
