@@ -24,7 +24,12 @@ func Parse(values url.Values, opts ...mapinput.Option) (qb.Query, error) {
 	for _, key := range keys {
 		path, err := tokenize(key)
 		if err != nil {
-			return qb.Query{}, err
+			return qb.Query{}, qb.NewError(
+				err,
+				qb.WithDefaultStage(qb.StageParse),
+				qb.WithDefaultCode(qb.CodeInvalidInput),
+				qb.WithPath(key),
+			)
 		}
 
 		raw := values[key]
@@ -45,12 +50,22 @@ func Parse(values url.Values, opts ...mapinput.Option) (qb.Query, error) {
 
 		inserted, err := insert(document, path, value)
 		if err != nil {
-			return qb.Query{}, fmt.Errorf("%s: %w", key, err)
+			return qb.Query{}, qb.NewError(
+				err,
+				qb.WithDefaultStage(qb.StageParse),
+				qb.WithDefaultCode(qb.CodeInvalidInput),
+				qb.WithPath(key),
+			)
 		}
 
 		root, ok := inserted.(map[string]any)
 		if !ok {
-			return qb.Query{}, fmt.Errorf("%s: invalid root structure", key)
+			return qb.Query{}, qb.NewError(
+				fmt.Errorf("invalid root structure"),
+				qb.WithStage(qb.StageParse),
+				qb.WithCode(qb.CodeInvalidInput),
+				qb.WithPath(key),
+			)
 		}
 		document = root
 	}

@@ -58,7 +58,7 @@ func ParseJSON(data []byte, opts ...Option) (qb.Query, error) {
 
 	var payload map[string]any
 	if err := decoder.Decode(&payload); err != nil {
-		return qb.Query{}, err
+		return qb.Query{}, parseError(err, qb.CodeInvalidInput)
 	}
 
 	return Parse(payload, opts...)
@@ -72,6 +72,32 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 	}
 
 	var query qb.Query
+
+	if selectKey, rawSelect, ok, err := pickExclusiveValue(input, "select", "pick"); err != nil {
+		return qb.Query{}, parseError(err, qb.CodeInvalidInput)
+	} else if ok {
+		selects, err := parseNames(rawSelect, selectKey)
+		if err != nil {
+			return qb.Query{}, err
+		}
+		query.Selects = selects
+	}
+
+	if rawInclude, ok := pickValue(input, "include"); ok {
+		includes, err := parseNames(rawInclude, "include")
+		if err != nil {
+			return qb.Query{}, err
+		}
+		query.Includes = includes
+	}
+
+	if rawGroupBy, ok := pickValue(input, "group_by"); ok {
+		groupBy, err := parseNames(rawGroupBy, "group_by")
+		if err != nil {
+			return qb.Query{}, err
+		}
+		query.GroupBy = groupBy
+	}
 
 	if where, ok := pickObject(input, "where", "filter"); ok {
 		filter, err := parseExpr(where, config, "where")
@@ -95,7 +121,11 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 			return qb.Query{}, err
 		}
 		if limit < 0 {
-			return qb.Query{}, fmt.Errorf("limit: cannot be negative")
+			return qb.Query{}, parseError(
+				fmt.Errorf("limit cannot be negative"),
+				qb.CodeInvalidValue,
+				qb.WithPath("limit"),
+			)
 		}
 		query.Limit = &limit
 	}
@@ -106,9 +136,55 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 			return qb.Query{}, err
 		}
 		if offset < 0 {
-			return qb.Query{}, fmt.Errorf("offset: cannot be negative")
+			return qb.Query{}, parseError(
+				fmt.Errorf("offset cannot be negative"),
+				qb.CodeInvalidValue,
+				qb.WithPath("offset"),
+			)
 		}
 		query.Offset = &offset
+	}
+
+	if rawPage, ok := pickValue(input, "page"); ok {
+		page, err := parseInteger(rawPage, "page")
+		if err != nil {
+			return qb.Query{}, err
+		}
+		if page < 1 {
+			return qb.Query{}, parseError(
+				fmt.Errorf("page must be greater than or equal to 1"),
+				qb.CodeInvalidValue,
+				qb.WithPath("page"),
+			)
+		}
+		query.Page = &page
+	}
+
+	if rawSize, ok := pickValue(input, "size"); ok {
+		size, err := parseInteger(rawSize, "size")
+		if err != nil {
+			return qb.Query{}, err
+		}
+		if size < 1 {
+			return qb.Query{}, parseError(
+				fmt.Errorf("size must be greater than or equal to 1"),
+				qb.CodeInvalidValue,
+				qb.WithPath("size"),
+			)
+		}
+		query.Size = &size
+	}
+
+	if rawCursor, ok := pickValue(input, "cursor"); ok {
+		cursor, err := parseCursor(rawCursor, "cursor")
+		if err != nil {
+			return qb.Query{}, err
+		}
+		query.Cursor = cursor
+	}
+
+	if _, _, err := query.ResolvedPagination(); err != nil {
+		return qb.Query{}, parseError(err, qb.CodeInvalidQuery)
 	}
 
 	return query, nil
@@ -117,7 +193,11 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 func parseExpr(node any, opts options, path string) (qb.Expr, error) {
 	object, ok := node.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("%s: expected object", path)
+		return nil, parseError(
+			fmt.Errorf("expected object"),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
 	}
 
 	keys := sortedKeys(object)
@@ -159,7 +239,7 @@ func parseExpr(node any, opts options, path string) (qb.Expr, error) {
 func parseLogicalGroup(combine func(...qb.Expr) qb.Expr, node any, opts options, path string) (qb.Expr, error) {
 	items, err := asList(node, path)
 	if err != nil {
-		return nil, err
+		return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(path))
 	}
 
 	exprs := make([]qb.Expr, 0, len(items))
@@ -358,7 +438,12 @@ func parseOperator(field, operator string, node any, opts options, path string) 
 		}
 		return qb.Field(resolvedField).NotNull(), nil
 	default:
-		return nil, fmt.Errorf("%s: unsupported operator %q", path, operator)
+		return nil, parseError(
+			fmt.Errorf("unsupported operator %q", operator),
+			qb.CodeUnsupportedOperator,
+			qb.WithPath(path),
+			qb.WithField(field),
+		)
 	}
 }
 
@@ -385,7 +470,11 @@ func parseSorts(node any, opts options) ([]qb.Sort, error) {
 		}
 
 		if field == "" {
-			return nil, fmt.Errorf("sort: empty sort field")
+			return nil, parseError(
+				fmt.Errorf("empty sort field"),
+				qb.CodeInvalidInput,
+				qb.WithPath("sort"),
+			)
 		}
 
 		resolvedField, err := resolveSortField(field, opts)
@@ -402,6 +491,61 @@ func parseSorts(node any, opts options) ([]qb.Sort, error) {
 	return sorts, nil
 }
 
+func parseNames(node any, path string) ([]string, error) {
+	items, err := asStringList(node, path)
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		names = append(names, item)
+	}
+
+	return names, nil
+}
+
+func parseCursor(node any, path string) (*qb.Cursor, error) {
+	switch typed := node.(type) {
+	case string:
+		typed = strings.TrimSpace(typed)
+		if typed == "" {
+			return nil, parseError(
+				fmt.Errorf("cursor token cannot be empty"),
+				qb.CodeInvalidInput,
+				qb.WithPath(path),
+			)
+		}
+		return &qb.Cursor{Token: typed}, nil
+	case json.Number:
+		return &qb.Cursor{Token: typed.String()}, nil
+	case bool:
+		return &qb.Cursor{Token: strconv.FormatBool(typed)}, nil
+	case int:
+		return &qb.Cursor{Token: strconv.Itoa(typed)}, nil
+	case int64:
+		return &qb.Cursor{Token: strconv.FormatInt(typed, 10)}, nil
+	case float64:
+		return &qb.Cursor{Token: strconv.FormatFloat(typed, 'f', -1, 64)}, nil
+	case map[string]any:
+		cursor := qb.Cursor{Values: make(map[string]any, len(typed))}
+		for key, value := range typed {
+			cursor.Values[key] = normalizeJSONNumber(value)
+		}
+		return &cursor, nil
+	default:
+		return nil, parseError(
+			fmt.Errorf("expected string or object cursor, got %T", node),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
+	}
+}
+
 func parseInteger(value any, path string) (int, error) {
 	switch typed := value.(type) {
 	case int:
@@ -416,12 +560,20 @@ func parseInteger(value any, path string) (int, error) {
 		return int(typed), nil
 	case float32:
 		if math.Trunc(float64(typed)) != float64(typed) {
-			return 0, fmt.Errorf("%s: expected whole number, got %v", path, typed)
+			return 0, parseError(
+				fmt.Errorf("expected whole number, got %v", typed),
+				qb.CodeInvalidValue,
+				qb.WithPath(path),
+			)
 		}
 		return int(typed), nil
 	case float64:
 		if math.Trunc(typed) != typed {
-			return 0, fmt.Errorf("%s: expected whole number, got %v", path, typed)
+			return 0, parseError(
+				fmt.Errorf("expected whole number, got %v", typed),
+				qb.CodeInvalidValue,
+				qb.WithPath(path),
+			)
 		}
 		return int(typed), nil
 	case json.Number:
@@ -430,20 +582,28 @@ func parseInteger(value any, path string) (int, error) {
 		}
 		f, err := typed.Float64()
 		if err != nil {
-			return 0, fmt.Errorf("%s: %w", path, err)
+			return 0, parseError(err, qb.CodeInvalidValue, qb.WithPath(path))
 		}
 		if math.Trunc(f) != f {
-			return 0, fmt.Errorf("%s: expected whole number, got %v", path, typed)
+			return 0, parseError(
+				fmt.Errorf("expected whole number, got %v", typed),
+				qb.CodeInvalidValue,
+				qb.WithPath(path),
+			)
 		}
 		return int(f), nil
 	case string:
 		n, err := strconv.Atoi(strings.TrimSpace(typed))
 		if err != nil {
-			return 0, fmt.Errorf("%s: %w", path, err)
+			return 0, parseError(err, qb.CodeInvalidValue, qb.WithPath(path))
 		}
 		return n, nil
 	default:
-		return 0, fmt.Errorf("%s: expected integer, got %T", path, value)
+		return 0, parseError(
+			fmt.Errorf("expected integer, got %T", value),
+			qb.CodeInvalidValue,
+			qb.WithPath(path),
+		)
 	}
 }
 
@@ -455,7 +615,13 @@ func decodeValue(field string, op qb.Operator, value any, opts options, path str
 
 	decoded, err := opts.valueDecoder(field, op, value)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, parseError(
+			err,
+			qb.CodeInvalidValue,
+			qb.WithPath(path),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
 	}
 	return decoded, nil
 }
@@ -467,10 +633,22 @@ func resolveFilterField(field string, op qb.Operator, opts options, path string)
 
 	resolvedField, err := opts.filterFieldResolver(field, op)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", path, err)
+		return "", parseError(
+			err,
+			qb.CodeUnknownField,
+			qb.WithPath(path),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
 	}
 	if resolvedField == "" {
-		return "", fmt.Errorf("%s: filter field resolver returned an empty field", path)
+		return "", parseError(
+			fmt.Errorf("filter field resolver returned an empty field"),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
 	}
 	return resolvedField, nil
 }
@@ -482,10 +660,20 @@ func resolveSortField(field string, opts options) (string, error) {
 
 	resolvedField, err := opts.sortFieldResolver(field)
 	if err != nil {
-		return "", fmt.Errorf("sort: %w", err)
+		return "", parseError(
+			err,
+			qb.CodeUnknownField,
+			qb.WithPath("sort"),
+			qb.WithField(field),
+		)
 	}
 	if resolvedField == "" {
-		return "", fmt.Errorf("sort: sort field resolver returned an empty field")
+		return "", parseError(
+			fmt.Errorf("sort field resolver returned an empty field"),
+			qb.CodeInvalidInput,
+			qb.WithPath("sort"),
+			qb.WithField(field),
+		)
 	}
 	return resolvedField, nil
 }
@@ -493,7 +681,13 @@ func resolveSortField(field string, opts options) (string, error) {
 func decodeListFromNode(field string, op qb.Operator, node any, opts options, path string) ([]any, error) {
 	values, err := asList(node, path)
 	if err != nil {
-		return nil, err
+		return nil, parseError(
+			err,
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
 	}
 	return decodeList(field, op, values, opts, path)
 }
@@ -526,7 +720,7 @@ func asList(value any, path string) ([]any, error) {
 		}
 		return list, nil
 	default:
-		return nil, fmt.Errorf("%s: expected list, got %T", path, value)
+		return nil, fmt.Errorf("expected list, got %T", value)
 	}
 }
 
@@ -556,12 +750,20 @@ func asStringList(value any, path string) ([]string, error) {
 					out = append(out, part)
 				}
 			default:
-				return nil, fmt.Errorf("%s[%d]: expected string, got %T", path, i, item)
+				return nil, parseError(
+					fmt.Errorf("expected string, got %T", item),
+					qb.CodeInvalidInput,
+					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+				)
 			}
 		}
 		return out, nil
 	default:
-		return nil, fmt.Errorf("%s: expected string or list, got %T", path, value)
+		return nil, parseError(
+			fmt.Errorf("expected string or list, got %T", value),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
 	}
 }
 
@@ -604,6 +806,29 @@ func pickValue(input map[string]any, key string) (any, bool) {
 	return value, true
 }
 
+func pickExclusiveValue(input map[string]any, keys ...string) (string, any, bool, error) {
+	var (
+		foundKey string
+		found    any
+		ok       bool
+	)
+
+	for _, key := range keys {
+		value, exists := pickValue(input, key)
+		if !exists {
+			continue
+		}
+		if ok {
+			return "", nil, false, fmt.Errorf("only one of %s may be provided", strings.Join(keys, ", "))
+		}
+		foundKey = key
+		found = value
+		ok = true
+	}
+
+	return foundKey, found, ok, nil
+}
+
 func sortedKeys(values map[string]any) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -611,4 +836,11 @@ func sortedKeys(values map[string]any) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func parseError(err error, code qb.ErrorCode, opts ...qb.ErrorOption) error {
+	allOpts := make([]qb.ErrorOption, 0, len(opts)+2)
+	allOpts = append(allOpts, qb.WithDefaultStage(qb.StageParse), qb.WithDefaultCode(code))
+	allOpts = append(allOpts, opts...)
+	return qb.WrapError(err, allOpts...)
 }

@@ -28,6 +28,76 @@ func (b Builder) Where(expr Expr) Builder {
 	return b
 }
 
+// Select appends projected fields.
+func (b Builder) Select(fields ...string) Builder {
+	appended, err := appendFields(b.query.Selects, "select", fields...)
+	if err != nil {
+		b.err = err
+		return b
+	}
+
+	b.query.Selects = appended
+	return b
+}
+
+// Pick is an alias for Select.
+func (b Builder) Pick(fields ...string) Builder {
+	return b.Select(fields...)
+}
+
+// SelectExpr appends projected expressions such as qb.Lower(qb.Field("name")).
+func (b Builder) SelectExpr(exprs ...ValueExpr) Builder {
+	appended, err := appendValueExprs(b.query.SelectExprs, "select", exprs...)
+	if err != nil {
+		b.err = err
+		return b
+	}
+
+	b.query.SelectExprs = appended
+	return b
+}
+
+// PickExpr is an alias for SelectExpr.
+func (b Builder) PickExpr(exprs ...ValueExpr) Builder {
+	return b.SelectExpr(exprs...)
+}
+
+// Include appends eager-load/include hints.
+func (b Builder) Include(paths ...string) Builder {
+	appended, err := appendFields(b.query.Includes, "include", paths...)
+	if err != nil {
+		b.err = err
+		return b
+	}
+
+	b.query.Includes = appended
+	return b
+}
+
+// GroupBy appends grouping fields.
+func (b Builder) GroupBy(fields ...string) Builder {
+	appended, err := appendFields(b.query.GroupBy, "group_by", fields...)
+	if err != nil {
+		b.err = err
+		return b
+	}
+
+	b.query.GroupBy = appended
+	return b
+}
+
+// GroupByExpr appends grouping expressions such as qb.Lower(qb.Field("name")).
+func (b Builder) GroupByExpr(exprs ...ValueExpr) Builder {
+	appended, err := appendValueExprs(b.query.GroupExprs, "group_by", exprs...)
+	if err != nil {
+		b.err = err
+		return b
+	}
+
+	b.query.GroupExprs = appended
+	return b
+}
+
 // SortBy appends a sort clause.
 func (b Builder) SortBy(field string, direction Direction) Builder {
 	if b.err != nil {
@@ -55,7 +125,38 @@ func (b Builder) SortBy(field string, direction Direction) Builder {
 	return b
 }
 
-// Limit sets the maximum number of rows to return.
+// Page sets the offset-based page number. Page numbering starts at 1.
+func (b Builder) Page(page int) Builder {
+	if b.err != nil {
+		return b
+	}
+
+	if page < 1 {
+		b.err = fmt.Errorf("qb: page must be greater than or equal to 1")
+		return b
+	}
+
+	b.query.Page = intPtr(page)
+	return b
+}
+
+// Size sets the requested page size. It is used by both page-based and cursor
+// pagination.
+func (b Builder) Size(size int) Builder {
+	if b.err != nil {
+		return b
+	}
+
+	if size < 1 {
+		b.err = fmt.Errorf("qb: size must be greater than or equal to 1")
+		return b
+	}
+
+	b.query.Size = intPtr(size)
+	return b
+}
+
+// Limit sets the maximum number of rows to return. Prefer Size for new code.
 func (b Builder) Limit(limit int) Builder {
 	if b.err != nil {
 		return b
@@ -70,7 +171,7 @@ func (b Builder) Limit(limit int) Builder {
 	return b
 }
 
-// Offset sets the row offset.
+// Offset sets the row offset. Prefer Page and Size for new code.
 func (b Builder) Offset(offset int) Builder {
 	if b.err != nil {
 		return b
@@ -85,10 +186,51 @@ func (b Builder) Offset(offset int) Builder {
 	return b
 }
 
+// CursorToken sets an opaque cursor token. Cursor pagination requires Size.
+func (b Builder) CursorToken(token string) Builder {
+	if b.err != nil {
+		return b
+	}
+
+	if token == "" {
+		b.err = fmt.Errorf("qb: cursor token cannot be empty")
+		return b
+	}
+
+	cursor := Cursor{Token: token}
+	b.query.Cursor = &cursor
+	return b
+}
+
+// CursorValues sets structured cursor values. Cursor pagination requires Size.
+func (b Builder) CursorValues(values map[string]any) Builder {
+	if b.err != nil {
+		return b
+	}
+
+	if len(values) == 0 {
+		b.err = fmt.Errorf("qb: cursor values cannot be empty")
+		return b
+	}
+
+	cursor := Cursor{
+		Values: make(map[string]any, len(values)),
+	}
+	for key, value := range values {
+		cursor.Values[key] = value
+	}
+	b.query.Cursor = &cursor
+	return b
+}
+
 // Query returns the built query.
 func (b Builder) Query() (Query, error) {
 	if b.err != nil {
 		return Query{}, b.err
+	}
+
+	if _, _, err := b.query.ResolvedPagination(); err != nil {
+		return Query{}, err
 	}
 
 	return b.query.Clone(), nil
@@ -96,4 +238,28 @@ func (b Builder) Query() (Query, error) {
 
 func intPtr(v int) *int {
 	return &v
+}
+
+func appendFields(target []string, label string, fields ...string) ([]string, error) {
+	appended := append([]string(nil), target...)
+	for _, field := range fields {
+		if field == "" {
+			return nil, fmt.Errorf("qb: %s field cannot be empty", label)
+		}
+		appended = append(appended, field)
+	}
+
+	return appended, nil
+}
+
+func appendValueExprs(target []ValueExpr, label string, exprs ...ValueExpr) ([]ValueExpr, error) {
+	appended := cloneValueExprSlice(target)
+	for _, expr := range exprs {
+		if expr == nil {
+			return nil, fmt.Errorf("qb: %s expression cannot be nil", label)
+		}
+		appended = append(appended, CloneValueExpr(expr))
+	}
+
+	return appended, nil
 }

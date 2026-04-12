@@ -2,6 +2,7 @@ package mapinput_test
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"testing"
 
@@ -76,5 +77,120 @@ func TestParseWithValueDecoder(t *testing.T) {
 
 	if len(statement.Args) != 1 || statement.Args[0] != 21 {
 		t.Fatalf("unexpected args: %#v", statement.Args)
+	}
+}
+
+func TestParseReturnsStructuredError(t *testing.T) {
+	_, err := mapinput.Parse(map[string]any{
+		"limit": "not-a-number",
+	})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+
+	var diagnostic *qb.Error
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("expected qb.Error, got %T", err)
+	}
+
+	if diagnostic.Stage != qb.StageParse || diagnostic.Code != qb.CodeInvalidValue || diagnostic.Path != "limit" {
+		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+}
+
+func TestParseSelectIncludeGroupByAndPageSize(t *testing.T) {
+	input := map[string]any{
+		"pick":     "id,status",
+		"include":  []any{"Customer", "Orders.Items"},
+		"group_by": []any{"status"},
+		"where": map[string]any{
+			"status": "active",
+		},
+		"sort": []any{"-created_at"},
+		"page": "3",
+		"size": json.Number("25"),
+	}
+
+	query, err := mapinput.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	if len(query.Selects) != 2 || query.Selects[0] != "id" || query.Selects[1] != "status" {
+		t.Fatalf("unexpected selects: %#v", query.Selects)
+	}
+
+	if len(query.Includes) != 2 || query.Includes[0] != "Customer" || query.Includes[1] != "Orders.Items" {
+		t.Fatalf("unexpected includes: %#v", query.Includes)
+	}
+
+	if len(query.GroupBy) != 1 || query.GroupBy[0] != "status" {
+		t.Fatalf("unexpected group_by: %#v", query.GroupBy)
+	}
+
+	limit, offset, err := query.ResolvedPagination()
+	if err != nil {
+		t.Fatalf("ResolvedPagination() error = %v", err)
+	}
+
+	if limit == nil || *limit != 25 {
+		t.Fatalf("unexpected resolved limit: %v", limit)
+	}
+
+	if offset == nil || *offset != 50 {
+		t.Fatalf("unexpected resolved offset: %v", offset)
+	}
+}
+
+func TestParseCursor(t *testing.T) {
+	query, err := mapinput.Parse(map[string]any{
+		"cursor": map[string]any{
+			"created_at": "2026-04-11T12:00:00Z",
+			"id":         json.Number("981"),
+		},
+		"size": "25",
+	})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	if query.Cursor == nil {
+		t.Fatal("expected cursor to be set")
+	}
+
+	if got := query.Cursor.Values["id"]; got != int64(981) {
+		t.Fatalf("unexpected cursor value: %#v", got)
+	}
+
+	limit, offset, err := query.ResolvedPagination()
+	if err != nil {
+		t.Fatalf("ResolvedPagination() error = %v", err)
+	}
+
+	if limit == nil || *limit != 25 {
+		t.Fatalf("unexpected resolved limit: %v", limit)
+	}
+
+	if offset != nil {
+		t.Fatalf("expected nil offset, got %v", offset)
+	}
+}
+
+func TestParseRejectsSelectAndPickTogether(t *testing.T) {
+	_, err := mapinput.Parse(map[string]any{
+		"select": "id",
+		"pick":   "status",
+	})
+	if err == nil {
+		t.Fatal("expected select/pick conflict error")
+	}
+}
+
+func TestParseRejectsCursorWithoutSize(t *testing.T) {
+	_, err := mapinput.Parse(map[string]any{
+		"cursor": "opaque-cursor",
+	})
+	if err == nil {
+		t.Fatal("expected cursor without size error")
 	}
 }

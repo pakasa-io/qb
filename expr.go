@@ -35,9 +35,11 @@ type Expr interface {
 	exprNode()
 }
 
-// Predicate matches a field using an operator and optional value.
+// Predicate matches a left-hand expression using an operator and optional
+// value.
 type Predicate struct {
 	Field string
+	Left  ValueExpr
 	Op    Operator
 	Value any
 }
@@ -68,51 +70,51 @@ func Field(name string) Ref {
 }
 
 func (r Ref) Eq(value any) Expr {
-	return Predicate{Field: string(r), Op: OpEq, Value: value}
+	return Predicate{Field: string(r), Op: OpEq, Value: clonePredicateValue(value)}
 }
 
 func (r Ref) Ne(value any) Expr {
-	return Predicate{Field: string(r), Op: OpNe, Value: value}
+	return Predicate{Field: string(r), Op: OpNe, Value: clonePredicateValue(value)}
 }
 
 func (r Ref) Gt(value any) Expr {
-	return Predicate{Field: string(r), Op: OpGt, Value: value}
+	return Predicate{Field: string(r), Op: OpGt, Value: clonePredicateValue(value)}
 }
 
 func (r Ref) Gte(value any) Expr {
-	return Predicate{Field: string(r), Op: OpGte, Value: value}
+	return Predicate{Field: string(r), Op: OpGte, Value: clonePredicateValue(value)}
 }
 
 func (r Ref) Lt(value any) Expr {
-	return Predicate{Field: string(r), Op: OpLt, Value: value}
+	return Predicate{Field: string(r), Op: OpLt, Value: clonePredicateValue(value)}
 }
 
 func (r Ref) Lte(value any) Expr {
-	return Predicate{Field: string(r), Op: OpLte, Value: value}
+	return Predicate{Field: string(r), Op: OpLte, Value: clonePredicateValue(value)}
 }
 
 func (r Ref) In(values ...any) Expr {
-	return Predicate{Field: string(r), Op: OpIn, Value: flattenValues(values)}
+	return Predicate{Field: string(r), Op: OpIn, Value: clonePredicateValue(flattenValues(values))}
 }
 
 func (r Ref) NotIn(values ...any) Expr {
-	return Predicate{Field: string(r), Op: OpNotIn, Value: flattenValues(values)}
+	return Predicate{Field: string(r), Op: OpNotIn, Value: clonePredicateValue(flattenValues(values))}
 }
 
 func (r Ref) Like(value any) Expr {
-	return Predicate{Field: string(r), Op: OpLike, Value: value}
+	return Predicate{Field: string(r), Op: OpLike, Value: clonePredicateValue(value)}
 }
 
 func (r Ref) Contains(value any) Expr {
-	return Predicate{Field: string(r), Op: OpContains, Value: value}
+	return Predicate{Field: string(r), Op: OpContains, Value: clonePredicateValue(value)}
 }
 
 func (r Ref) Prefix(value any) Expr {
-	return Predicate{Field: string(r), Op: OpPrefix, Value: value}
+	return Predicate{Field: string(r), Op: OpPrefix, Value: clonePredicateValue(value)}
 }
 
 func (r Ref) Suffix(value any) Expr {
-	return Predicate{Field: string(r), Op: OpSuffix, Value: value}
+	return Predicate{Field: string(r), Op: OpSuffix, Value: clonePredicateValue(value)}
 }
 
 func (r Ref) IsNull() Expr {
@@ -154,6 +156,16 @@ func Walk(expr Expr, visit func(Expr) error) error {
 
 	switch typed := expr.(type) {
 	case Predicate:
+		if typed.Left != nil {
+			if err := WalkValueExpr(typed.Left, func(ValueExpr) error { return nil }); err != nil {
+				return err
+			}
+		}
+		if valueExpr, ok := asValueExpr(typed.Value); ok {
+			if err := WalkValueExpr(valueExpr, func(ValueExpr) error { return nil }); err != nil {
+				return err
+			}
+		}
 		return nil
 	case Group:
 		for _, term := range typed.Terms {
@@ -175,6 +187,8 @@ func CloneExpr(expr Expr) Expr {
 	case nil:
 		return nil
 	case Predicate:
+		typed.Left = CloneValueExpr(typed.Left)
+		typed.Value = clonePredicateValue(typed.Value)
 		return typed
 	case Group:
 		clone := Group{

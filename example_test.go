@@ -23,10 +23,11 @@ type exampleUser struct {
 
 func Example() {
 	userSchema := schema.MustNew(
-		schema.Define("status", schema.Aliases("state"), schema.Operators(qb.OpEq, qb.OpIn)),
-		schema.Define("role", schema.Operators(qb.OpEq, qb.OpIn)),
+		schema.Define("status", schema.Storage("users.status"), schema.Aliases("state"), schema.Operators(qb.OpEq, qb.OpIn)),
+		schema.Define("role", schema.Storage("users.role"), schema.Operators(qb.OpEq, qb.OpIn)),
 		schema.Define(
 			"age",
+			schema.Storage("users.age"),
 			schema.Aliases("minAge"),
 			schema.Operators(qb.OpEq, qb.OpGte, qb.OpLte),
 			schema.Decode(func(_ qb.Operator, value any) (any, error) {
@@ -38,10 +39,11 @@ func Example() {
 				}
 			}),
 		),
-		schema.Define("created_at", schema.Aliases("createdAt"), schema.Sortable(), schema.DisableFiltering()),
+		schema.Define("created_at", schema.Storage("users.created_at"), schema.Aliases("createdAt"), schema.Sortable(), schema.DisableFiltering()),
 	)
 
 	payload := map[string]any{
+		"pick": []any{"state", "role"},
 		"where": map[string]any{
 			"state":  "active",
 			"minAge": map[string]any{"$gte": "21"},
@@ -50,8 +52,10 @@ func Example() {
 				map[string]any{"role": "owner"},
 			},
 		},
-		"sort":  []any{"-createdAt"},
-		"limit": 10,
+		"group_by": []any{"state", "role"},
+		"sort":     []any{"-createdAt"},
+		"page":     2,
+		"size":     10,
 	}
 
 	query, err := mapinput.Parse(
@@ -65,7 +69,7 @@ func Example() {
 	}
 
 	statement, err := sqladapter.New(
-		sqladapter.WithQueryTransformer(userSchema.Normalize),
+		sqladapter.WithQueryTransformer(userSchema.ToStorage),
 	).Compile(query)
 	if err != nil {
 		panic(err)
@@ -80,7 +84,7 @@ func Example() {
 	}
 
 	tx, err := gormadapter.New(
-		gormadapter.WithQueryTransformer(userSchema.Normalize),
+		gormadapter.WithQueryTransformer(userSchema.ToStorage),
 	).Apply(db.Model(&exampleUser{}), query)
 	if err != nil {
 		panic(err)
@@ -95,8 +99,8 @@ func Example() {
 	fmt.Println("GORM args:", result.Statement.Vars)
 
 	// Output:
-	// SQL: WHERE (("role" = ? OR "role" = ?) AND "age" >= ? AND "status" = ?) ORDER BY "created_at" DESC LIMIT 10
+	// SQL: SELECT "users"."status", "users"."role" WHERE (("users"."role" = ? OR "users"."role" = ?) AND "users"."age" >= ? AND "users"."status" = ?) GROUP BY "users"."status", "users"."role" ORDER BY "users"."created_at" DESC LIMIT 10 OFFSET 10
 	// SQL args: [admin owner 21 active]
-	// GORM: SELECT * FROM `example_users` WHERE (`role` = ? OR `role` = ?) AND `age` >= ? AND `status` = ? ORDER BY `created_at` DESC LIMIT 10
+	// GORM: SELECT users.status,users.role FROM `example_users` WHERE (`users`.`role` = ? OR `users`.`role` = ?) AND `users`.`age` >= ? AND `users`.`status` = ? GROUP BY `users`.`status`,`users`.`role` ORDER BY `users`.`created_at` DESC LIMIT 10 OFFSET 10
 	// GORM args: [admin owner 21 active]
 }

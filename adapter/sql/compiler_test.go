@@ -87,3 +87,140 @@ func TestCompileWithTransformerError(t *testing.T) {
 		t.Fatalf("expected transformer error, got %v", err)
 	}
 }
+
+func TestCompileReturnsStructuredError(t *testing.T) {
+	query := qb.Query{
+		Filter: qb.Predicate{
+			Field: "status",
+			Op:    qb.Operator("bogus"),
+			Value: "active",
+		},
+	}
+
+	_, err := sqladapter.New().Compile(query)
+	if err == nil {
+		t.Fatal("expected compile error")
+	}
+
+	var diagnostic *qb.Error
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("expected qb.Error, got %T", err)
+	}
+
+	if diagnostic.Stage != qb.StageCompile || diagnostic.Code != qb.CodeUnsupportedOperator {
+		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+}
+
+func TestCompileSelectGroupByAndPageSize(t *testing.T) {
+	query, err := qb.New().
+		Select("status", "role").
+		Where(qb.Field("tenant_id").Eq(42)).
+		GroupBy("status", "role").
+		SortBy("status", qb.Asc).
+		Page(2).
+		Size(10).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	statement, err := sqladapter.New().Compile(query)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	wantSQL := `SELECT "status", "role" WHERE "tenant_id" = ? GROUP BY "status", "role" ORDER BY "status" ASC LIMIT 10 OFFSET 10`
+	if statement.SQL != wantSQL {
+		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
+	}
+}
+
+func TestCompileCursorQueryWithTransformer(t *testing.T) {
+	query, err := qb.New().
+		SortBy("created_at", qb.Desc).
+		Size(25).
+		CursorValues(map[string]any{
+			"created_at": "2026-04-11T12:00:00Z",
+			"id":         981,
+		}).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	statement, err := sqladapter.New(
+		sqladapter.WithQueryTransformer(func(query qb.Query) (qb.Query, error) {
+			if query.Cursor == nil {
+				return query, nil
+			}
+
+			query.Filter = qb.Or(
+				qb.Field("created_at").Lt(query.Cursor.Values["created_at"]),
+				qb.And(
+					qb.Field("created_at").Eq(query.Cursor.Values["created_at"]),
+					qb.Field("id").Lt(query.Cursor.Values["id"]),
+				),
+			)
+			query.Cursor = nil
+			return query, nil
+		}),
+	).Compile(query)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	wantSQL := `WHERE ("created_at" < ? OR ("created_at" = ? AND "id" < ?)) ORDER BY "created_at" DESC LIMIT 25`
+	if statement.SQL != wantSQL {
+		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
+	}
+
+	wantArgs := []any{"2026-04-11T12:00:00Z", "2026-04-11T12:00:00Z", 981}
+	if len(statement.Args) != len(wantArgs) {
+		t.Fatalf("arg count mismatch: want %d, got %d", len(wantArgs), len(statement.Args))
+	}
+
+	for i := range wantArgs {
+		if statement.Args[i] != wantArgs[i] {
+			t.Fatalf("arg %d mismatch: want %#v, got %#v", i, wantArgs[i], statement.Args[i])
+		}
+	}
+}
+
+func TestCompileFunctionExpressions(t *testing.T) {
+	query, err := qb.New().
+		SelectExpr(
+			qb.Lower(qb.Field("users.name")),
+			qb.Field("users.age"),
+		).
+		GroupByExpr(qb.Lower(qb.Field("users.name"))).
+		Where(qb.And(
+			qb.Lower(qb.Field("users.name")).Eq("john"),
+			qb.Field("users.name").Eq(qb.Lower("JOHN")),
+		)).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	statement, err := sqladapter.New(sqladapter.WithDialect(sqladapter.DollarDialect{})).Compile(query)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	wantSQL := `SELECT LOWER("users"."name"), "users"."age" WHERE (LOWER("users"."name") = $1 AND "users"."name" = LOWER($2)) GROUP BY LOWER("users"."name")`
+	if statement.SQL != wantSQL {
+		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
+	}
+
+	wantArgs := []any{"john", "JOHN"}
+	if len(statement.Args) != len(wantArgs) {
+		t.Fatalf("arg count mismatch: want %d, got %d", len(wantArgs), len(statement.Args))
+	}
+
+	for i := range wantArgs {
+		if statement.Args[i] != wantArgs[i] {
+			t.Fatalf("arg %d mismatch: want %#v, got %#v", i, wantArgs[i], statement.Args[i])
+		}
+	}
+}

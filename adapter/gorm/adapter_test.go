@@ -19,6 +19,19 @@ type user struct {
 	Role      string
 	Age       int
 	CreatedAt int
+	CompanyID int
+	Company   company
+	Orders    []order
+}
+
+type company struct {
+	ID   int
+	Name string
+}
+
+type order struct {
+	ID     int
+	UserID int
 }
 
 func TestApply(t *testing.T) {
@@ -60,8 +73,8 @@ func TestApply(t *testing.T) {
 
 func TestApplyWithTransformer(t *testing.T) {
 	userSchema := schema.MustNew(
-		schema.Define("status", schema.Aliases("state")),
-		schema.Define("created_at", schema.Aliases("createdAt"), schema.Sortable()),
+		schema.Define("status", schema.Storage("users.status"), schema.Aliases("state")),
+		schema.Define("created_at", schema.Storage("users.created_at"), schema.Aliases("createdAt"), schema.Sortable()),
 	)
 
 	query, err := qb.New().
@@ -74,14 +87,14 @@ func TestApplyWithTransformer(t *testing.T) {
 
 	result, err := applyAndFind(
 		t,
-		gormadapter.New(gormadapter.WithQueryTransformer(userSchema.Normalize)),
+		gormadapter.New(gormadapter.WithQueryTransformer(userSchema.ToStorage)),
 		query,
 	)
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	wantSQL := "SELECT * FROM `users` WHERE `status` = ? ORDER BY `created_at` DESC"
+	wantSQL := "SELECT * FROM `users` WHERE `users`.`status` = ? ORDER BY `users`.`created_at` DESC"
 	if result.Statement.SQL.String() != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, result.Statement.SQL.String())
 	}
@@ -132,8 +145,17 @@ func TestScopeAddsError(t *testing.T) {
 		t.Fatal("expected scope error")
 	}
 
-	if !strings.Contains(result.Error.Error(), `unsupported operator "bogus"`) {
+	if !strings.Contains(result.Error.Error(), `operator "bogus" is not supported`) {
 		t.Fatalf("unexpected error: %v", result.Error)
+	}
+
+	var diagnostic *qb.Error
+	if !errors.As(result.Error, &diagnostic) {
+		t.Fatalf("expected qb.Error, got %T", result.Error)
+	}
+
+	if diagnostic.Stage != qb.StageApply || diagnostic.Code != qb.CodeUnsupportedOperator {
+		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
 	}
 }
 
@@ -153,6 +175,100 @@ func TestApplyWithTransformerError(t *testing.T) {
 	).Apply(dryRunDB(t), query)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected transformer error, got %v", err)
+	}
+}
+
+func TestApplyWithSelectIncludeGroupByAndPageSize(t *testing.T) {
+	query, err := qb.New().
+		Select("status", "role").
+		Include("Company", "Orders").
+		GroupBy("status", "role").
+		SortBy("status", qb.Asc).
+		Page(2).
+		Size(10).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	tx, err := gormadapter.New().Apply(dryRunDB(t).Model(&user{}), query)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	if len(tx.Statement.Selects) != 2 || tx.Statement.Selects[0] != "status" || tx.Statement.Selects[1] != "role" {
+		t.Fatalf("unexpected selects: %#v", tx.Statement.Selects)
+	}
+
+	if len(tx.Statement.Preloads) != 2 {
+		t.Fatalf("unexpected preloads: %#v", tx.Statement.Preloads)
+	}
+
+	if _, ok := tx.Statement.Preloads["Company"]; !ok {
+		t.Fatalf("expected Company preload, got %#v", tx.Statement.Preloads)
+	}
+
+	if _, ok := tx.Statement.Preloads["Orders"]; !ok {
+		t.Fatalf("expected Orders preload, got %#v", tx.Statement.Preloads)
+	}
+
+	groupClause, ok := tx.Statement.Clauses["GROUP BY"]
+	if !ok {
+		t.Fatal("expected GROUP BY clause")
+	}
+
+	groupBy, ok := groupClause.Expression.(clause.GroupBy)
+	if !ok {
+		t.Fatalf("unexpected GROUP BY expression: %T", groupClause.Expression)
+	}
+
+	if len(groupBy.Columns) != 2 || groupBy.Columns[0].Name != "status" || groupBy.Columns[1].Name != "role" {
+		t.Fatalf("unexpected GROUP BY columns: %#v", groupBy.Columns)
+	}
+
+	result := tx.Find(&[]user{})
+	if result.Error != nil {
+		t.Fatalf("Find() error = %v", result.Error)
+	}
+
+	wantSQL := "SELECT `status`,`role` FROM `users` GROUP BY `status`,`role` ORDER BY `status` LIMIT 10 OFFSET 10"
+	if result.Statement.SQL.String() != wantSQL {
+		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, result.Statement.SQL.String())
+	}
+}
+
+func TestApplyFunctionExpressions(t *testing.T) {
+	query, err := qb.New().
+		SelectExpr(qb.Lower(qb.Field("name")), qb.Field("age")).
+		GroupByExpr(qb.Lower(qb.Field("name"))).
+		Where(qb.And(
+			qb.Lower(qb.Field("name")).Eq("john"),
+			qb.Field("name").Eq(qb.Lower("JOHN")),
+		)).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	result, err := applyAndFind(t, gormadapter.New(), query)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	wantSQL := "SELECT LOWER(`name`), `age` FROM `users` WHERE LOWER(`name`) = ? AND `name` = LOWER(?) GROUP BY LOWER(`name`)"
+	if result.Statement.SQL.String() != wantSQL {
+		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, result.Statement.SQL.String())
+	}
+
+	wantArgs := []any{"john", "JOHN"}
+	if len(result.Statement.Vars) != len(wantArgs) {
+		t.Fatalf("arg count mismatch: want %d, got %d", len(wantArgs), len(result.Statement.Vars))
+	}
+
+	for i := range wantArgs {
+		if result.Statement.Vars[i] != wantArgs[i] {
+			t.Fatalf("arg %d mismatch: want %#v, got %#v", i, wantArgs[i], result.Statement.Vars[i])
+		}
 	}
 }
 
