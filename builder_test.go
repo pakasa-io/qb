@@ -163,36 +163,3 @@ func TestBuilderRejectsCursorWithoutSize(t *testing.T) {
 		t.Fatal("expected cursor without size error")
 	}
 }
-
-func TestBuilderSupportsFunctionExpressions(t *testing.T) {
-	query, err := qb.New().
-		SelectExpr(qb.Lower(qb.Field("user.name")), qb.Field("user.age")).
-		GroupByExpr(qb.Lower(qb.Field("user.name"))).
-		Where(qb.Lower(qb.Field("user.name")).Eq(qb.Lower("JOHN"))).
-		Query()
-	if err != nil {
-		t.Fatalf("Query() error = %v", err)
-	}
-
-	if len(query.SelectExprs) != 2 {
-		t.Fatalf("expected 2 select expressions, got %d", len(query.SelectExprs))
-	}
-
-	if len(query.GroupExprs) != 1 {
-		t.Fatalf("expected 1 group expression, got %d", len(query.GroupExprs))
-	}
-
-	predicate, ok := query.Filter.(qb.Predicate)
-	if !ok {
-		t.Fatalf("expected predicate filter, got %T", query.Filter)
-	}
-
-	if predicate.Left == nil {
-		t.Fatal("expected predicate left expression to be set")
-	}
-
-	right, ok := predicate.Value.(qb.CallExpr)
-	if !ok || right.Name != "lower" {
-		t.Fatalf("unexpected predicate value: %#v", predicate.Value)
-	}
-}

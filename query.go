@@ -37,18 +37,16 @@ func (c Cursor) Clone() Cursor {
 // Query is the database-agnostic representation shared between parsers and
 // adapters.
 type Query struct {
-	Selects     []string
-	SelectExprs []ValueExpr
-	Includes    []string
-	GroupBy     []string
-	GroupExprs  []ValueExpr
-	Filter      Expr
-	Sorts       []Sort
-	Limit       *int
-	Offset      *int
-	Page        *int
-	Size        *int
-	Cursor      *Cursor
+	Selects  []string
+	Includes []string
+	GroupBy  []string
+	Filter   Expr
+	Sorts    []Sort
+	Limit    *int
+	Offset   *int
+	Page     *int
+	Size     *int
+	Cursor   *Cursor
 }
 
 // QueryTransformer rewrites or validates a query.
@@ -57,13 +55,11 @@ type QueryTransformer func(Query) (Query, error)
 // Clone returns a safe copy of the query.
 func (q Query) Clone() Query {
 	clone := Query{
-		Selects:     append([]string(nil), q.Selects...),
-		SelectExprs: cloneValueExprSlice(q.SelectExprs),
-		Includes:    append([]string(nil), q.Includes...),
-		GroupBy:     append([]string(nil), q.GroupBy...),
-		GroupExprs:  cloneValueExprSlice(q.GroupExprs),
-		Filter:      CloneExpr(q.Filter),
-		Sorts:       append([]Sort(nil), q.Sorts...),
+		Selects:  append([]string(nil), q.Selects...),
+		Includes: append([]string(nil), q.Includes...),
+		GroupBy:  append([]string(nil), q.GroupBy...),
+		Filter:   CloneExpr(q.Filter),
+		Sorts:    append([]Sort(nil), q.Sorts...),
 	}
 
 	if q.Limit != nil {

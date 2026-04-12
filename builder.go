@@ -45,23 +45,6 @@ func (b Builder) Pick(fields ...string) Builder {
 	return b.Select(fields...)
 }
 
-// SelectExpr appends projected expressions such as qb.Lower(qb.Field("name")).
-func (b Builder) SelectExpr(exprs ...ValueExpr) Builder {
-	appended, err := appendValueExprs(b.query.SelectExprs, "select", exprs...)
-	if err != nil {
-		b.err = err
-		return b
-	}
-
-	b.query.SelectExprs = appended
-	return b
-}
-
-// PickExpr is an alias for SelectExpr.
-func (b Builder) PickExpr(exprs ...ValueExpr) Builder {
-	return b.SelectExpr(exprs...)
-}
-
 // Include appends eager-load/include hints.
 func (b Builder) Include(paths ...string) Builder {
 	appended, err := appendFields(b.query.Includes, "include", paths...)
@@ -83,18 +66,6 @@ func (b Builder) GroupBy(fields ...string) Builder {
 	}
 
 	b.query.GroupBy = appended
-	return b
-}
-
-// GroupByExpr appends grouping expressions such as qb.Lower(qb.Field("name")).
-func (b Builder) GroupByExpr(exprs ...ValueExpr) Builder {
-	appended, err := appendValueExprs(b.query.GroupExprs, "group_by", exprs...)
-	if err != nil {
-		b.err = err
-		return b
-	}
-
-	b.query.GroupExprs = appended
 	return b
 }
 
@@ -247,18 +218,6 @@ func appendFields(target []string, label string, fields ...string) ([]string, er
 			return nil, fmt.Errorf("qb: %s field cannot be empty", label)
 		}
 		appended = append(appended, field)
-	}
-
-	return appended, nil
-}
-
-func appendValueExprs(target []ValueExpr, label string, exprs ...ValueExpr) ([]ValueExpr, error) {
-	appended := cloneValueExprSlice(target)
-	for _, expr := range exprs {
-		if expr == nil {
-			return nil, fmt.Errorf("qb: %s expression cannot be nil", label)
-		}
-		appended = append(appended, CloneValueExpr(expr))
 	}
 
 	return appended, nil

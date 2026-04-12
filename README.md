@@ -11,7 +11,6 @@ Core helpers now also include:
 
 - `qb.RewriteQuery` for AST-level rewrites
 - `qb.QueryTransformer` and `qb.ComposeTransformers` for shared pipelines
-- function-aware value expressions such as `qb.Lower(qb.Field("name"))`
 - structured `qb.Error` values for parse/normalize/rewrite/compile/apply failures
 - adapter capability metadata for early validation
 
@@ -58,16 +57,6 @@ statement, err := sqladapter.New().Compile(query)
 if err != nil {
     panic(err)
 }
-```
-
-Function-aware expressions are also supported in the fluent API:
-
-```go
-query, err := qb.New().
-    SelectExpr(qb.Lower(qb.Field("users.name")), qb.Field("users.age")).
-    Where(qb.Lower(qb.Field("users.name")).Eq("john")).
-    Where(qb.Field("users.name").Eq(qb.Lower("JOHN"))).
-    Query()
 ```
 
 ## Schema-driven usage
@@ -177,12 +166,6 @@ Cursor notes:
 - built-in adapters do not interpret it directly
 - use a `qb.QueryTransformer` to rewrite cursor metadata into filters and sorts before `adapter/sql` or `adapter/gorm`
 - `cursor` requires `size`
-
-Function expression notes:
-
-- function expressions are supported in the core query model, the fluent builder, `adapter/sql`, `adapter/gorm`, and schema projection/normalization
-- current parser packages do not yet define a canonical JSON or query-string syntax for function calls
-- custom SQL dialects can customize function rendering by implementing `adapter/sql.FunctionDialect`
 
 ## Design notes
 

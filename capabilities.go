@@ -24,7 +24,7 @@ func (c Capabilities) SupportsOperator(op Operator) bool {
 
 // Validate checks whether the query fits within the declared capabilities.
 func (c Capabilities) Validate(stage ErrorStage, query Query) error {
-	if !c.SupportsSelect && (len(query.Selects) > 0 || len(query.SelectExprs) > 0) {
+	if !c.SupportsSelect && len(query.Selects) > 0 {
 		return NewError(
 			fmt.Errorf("select is not supported"),
 			WithStage(stage),
@@ -40,7 +40,7 @@ func (c Capabilities) Validate(stage ErrorStage, query Query) error {
 		)
 	}
 
-	if !c.SupportsGroupBy && (len(query.GroupBy) > 0 || len(query.GroupExprs) > 0) {
+	if !c.SupportsGroupBy && len(query.GroupBy) > 0 {
 		return NewError(
 			fmt.Errorf("group_by is not supported"),
 			WithStage(stage),

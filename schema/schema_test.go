@@ -227,38 +227,3 @@ func TestNormalizeReturnsStructuredError(t *testing.T) {
 		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
 	}
 }
-
-func TestToStorageRewritesFunctionExpressions(t *testing.T) {
-	userSchema := schema.MustNew(
-		schema.Define("name", schema.Storage("users.name")),
-		schema.Define("age", schema.Storage("users.age")),
-	)
-
-	query, err := qb.New().
-		SelectExpr(qb.Lower(qb.Field("name")), qb.Field("age")).
-		GroupByExpr(qb.Lower(qb.Field("name"))).
-		Where(qb.Lower(qb.Field("name")).Eq(qb.Lower("JOHN"))).
-		Query()
-	if err != nil {
-		t.Fatalf("Query() error = %v", err)
-	}
-
-	projected, err := userSchema.ToStorage(query)
-	if err != nil {
-		t.Fatalf("ToStorage() error = %v", err)
-	}
-
-	statement, err := sqladapter.New().Compile(projected)
-	if err != nil {
-		t.Fatalf("Compile() error = %v", err)
-	}
-
-	wantSQL := `SELECT LOWER("users"."name"), "users"."age" WHERE LOWER("users"."name") = LOWER(?) GROUP BY LOWER("users"."name")`
-	if statement.SQL != wantSQL {
-		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
-	}
-
-	if len(statement.Args) != 1 || statement.Args[0] != "JOHN" {
-		t.Fatalf("unexpected args: %#v", statement.Args)
-	}
-}

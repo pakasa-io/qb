@@ -14,12 +14,6 @@ type Dialect interface {
 	Placeholder(int) string
 }
 
-// FunctionDialect optionally customizes how function calls render for a
-// specific SQL dialect.
-type FunctionDialect interface {
-	CompileFunction(name string, args []string) (string, error)
-}
-
 // Statement is a parameterized SQL fragment.
 type Statement struct {
 	SQL  string
@@ -106,14 +100,12 @@ func (c Compiler) Compile(query qb.Query) (Statement, error) {
 	args := make([]any, 0)
 	argIndex := 1
 
-	if len(transformed.Selects) > 0 || len(transformed.SelectExprs) > 0 {
-		selects, selectArgs, nextArg, err := c.compileProjectionList(transformed.Selects, transformed.SelectExprs, "select", argIndex)
+	if len(transformed.Selects) > 0 {
+		selects, err := c.compileFields(transformed.Selects, "select")
 		if err != nil {
 			return Statement{}, err
 		}
 		clauses = append(clauses, "SELECT "+selects)
-		args = append(args, selectArgs...)
-		argIndex = nextArg
 	}
 
 	if transformed.Filter != nil {
@@ -126,14 +118,12 @@ func (c Compiler) Compile(query qb.Query) (Statement, error) {
 		argIndex = nextArg
 	}
 
-	if len(transformed.GroupBy) > 0 || len(transformed.GroupExprs) > 0 {
-		groupBy, groupArgs, nextArg, err := c.compileProjectionList(transformed.GroupBy, transformed.GroupExprs, "group_by", argIndex)
+	if len(transformed.GroupBy) > 0 {
+		groupBy, err := c.compileFields(transformed.GroupBy, "group_by")
 		if err != nil {
 			return Statement{}, err
 		}
 		clauses = append(clauses, "GROUP BY "+groupBy)
-		args = append(args, groupArgs...)
-		argIndex = nextArg
 	}
 
 	if len(transformed.Sorts) > 0 {
@@ -175,10 +165,6 @@ func (QuestionDialect) Placeholder(int) string {
 	return "?"
 }
 
-func (QuestionDialect) CompileFunction(name string, args []string) (string, error) {
-	return compileFunctionName(name, args)
-}
-
 // DollarDialect renders PostgreSQL-style numbered placeholders.
 type DollarDialect struct{}
 
@@ -188,10 +174,6 @@ func (DollarDialect) QuoteIdentifier(identifier string) string {
 
 func (DollarDialect) Placeholder(n int) string {
 	return fmt.Sprintf("$%d", n)
-}
-
-func (DollarDialect) CompileFunction(name string, args []string) (string, error) {
-	return compileFunctionName(name, args)
 }
 
 func (c Compiler) compileExpr(expr qb.Expr, argIndex int) (string, []any, int, error) {
@@ -244,8 +226,7 @@ func (c Compiler) compileExpr(expr qb.Expr, argIndex int) (string, []any, int, e
 }
 
 func (c Compiler) compilePredicate(predicate qb.Predicate, argIndex int) (string, []any, int, error) {
-	leftExpr, field := predicateLeftExpr(predicate)
-	if leftExpr == nil {
+	if predicate.Field == "" {
 		return "", nil, argIndex, qb.NewError(
 			fmt.Errorf("predicate field cannot be empty"),
 			qb.WithStage(qb.StageCompile),
@@ -254,50 +235,39 @@ func (c Compiler) compilePredicate(predicate qb.Predicate, argIndex int) (string
 		)
 	}
 
-	leftSQL, leftArgs, nextArg, err := c.compileValueExpr(leftExpr, argIndex)
-	if err != nil {
-		return "", nil, argIndex, err
-	}
+	field := c.dialect.QuoteIdentifier(predicate.Field)
 
 	switch predicate.Op {
 	case qb.OpEq:
-		if isNilPredicateValue(predicate.Value) {
-			return leftSQL + " IS NULL", leftArgs, nextArg, nil
+		if predicate.Value == nil {
+			return field + " IS NULL", nil, argIndex, nil
 		}
-		rightSQL, rightArgs, updatedArg, err := c.compileComparableValue(predicate.Value, nextArg)
-		if err != nil {
-			return "", nil, argIndex, err
-		}
-		return leftSQL + " = " + rightSQL, append(leftArgs, rightArgs...), updatedArg, nil
+		return field + " = " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
 	case qb.OpNe:
-		if isNilPredicateValue(predicate.Value) {
-			return leftSQL + " IS NOT NULL", leftArgs, nextArg, nil
+		if predicate.Value == nil {
+			return field + " IS NOT NULL", nil, argIndex, nil
 		}
-		rightSQL, rightArgs, updatedArg, err := c.compileComparableValue(predicate.Value, nextArg)
-		if err != nil {
-			return "", nil, argIndex, err
-		}
-		return leftSQL + " <> " + rightSQL, append(leftArgs, rightArgs...), updatedArg, nil
+		return field + " <> " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
 	case qb.OpGt:
-		return c.compileBinaryPredicate(leftSQL, leftArgs, nextArg, predicate.Value, ">", argIndex)
+		return field + " > " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
 	case qb.OpGte:
-		return c.compileBinaryPredicate(leftSQL, leftArgs, nextArg, predicate.Value, ">=", argIndex)
+		return field + " >= " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
 	case qb.OpLt:
-		return c.compileBinaryPredicate(leftSQL, leftArgs, nextArg, predicate.Value, "<", argIndex)
+		return field + " < " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
 	case qb.OpLte:
-		return c.compileBinaryPredicate(leftSQL, leftArgs, nextArg, predicate.Value, "<=", argIndex)
+		return field + " <= " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
 	case qb.OpLike:
-		return c.compileLikePredicate(leftSQL, leftArgs, nextArg, predicate.Value, "", "", argIndex)
+		return field + " LIKE " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
 	case qb.OpContains:
-		return c.compileLikePredicate(leftSQL, leftArgs, nextArg, predicate.Value, "%", "%", argIndex)
+		return field + " LIKE " + c.dialect.Placeholder(argIndex), []any{"%" + fmt.Sprint(predicate.Value) + "%"}, argIndex + 1, nil
 	case qb.OpPrefix:
-		return c.compileLikePredicate(leftSQL, leftArgs, nextArg, predicate.Value, "", "%", argIndex)
+		return field + " LIKE " + c.dialect.Placeholder(argIndex), []any{fmt.Sprint(predicate.Value) + "%"}, argIndex + 1, nil
 	case qb.OpSuffix:
-		return c.compileLikePredicate(leftSQL, leftArgs, nextArg, predicate.Value, "%", "", argIndex)
+		return field + " LIKE " + c.dialect.Placeholder(argIndex), []any{"%" + fmt.Sprint(predicate.Value)}, argIndex + 1, nil
 	case qb.OpIsNull:
-		return leftSQL + " IS NULL", leftArgs, nextArg, nil
+		return field + " IS NULL", nil, argIndex, nil
 	case qb.OpNotNull:
-		return leftSQL + " IS NOT NULL", leftArgs, nextArg, nil
+		return field + " IS NOT NULL", nil, argIndex, nil
 	case qb.OpIn, qb.OpNotIn:
 		values, ok := anyList(predicate.Value)
 		if !ok || len(values) == 0 {
@@ -305,23 +275,19 @@ func (c Compiler) compilePredicate(predicate qb.Predicate, argIndex int) (string
 				fmt.Errorf("%s requires a non-empty list", predicate.Op),
 				qb.WithStage(qb.StageCompile),
 				qb.WithCode(qb.CodeInvalidValue),
-				qb.WithField(field),
+				qb.WithField(predicate.Field),
 				qb.WithOperator(predicate.Op),
 			)
 		}
 
 		placeholders := make([]string, len(values))
-		args := append([]any(nil), leftArgs...)
-		updatedArg := nextArg
+		args := make([]any, len(values))
+		nextArg := argIndex
 
 		for i, value := range values {
-			part, partArgs, nextValueArg, err := c.compileComparableValue(value, updatedArg)
-			if err != nil {
-				return "", nil, argIndex, err
-			}
-			placeholders[i] = part
-			args = append(args, partArgs...)
-			updatedArg = nextValueArg
+			placeholders[i] = c.dialect.Placeholder(nextArg)
+			args[i] = value
+			nextArg++
 		}
 
 		operator := " IN "
@@ -329,13 +295,13 @@ func (c Compiler) compilePredicate(predicate qb.Predicate, argIndex int) (string
 			operator = " NOT IN "
 		}
 
-		return leftSQL + operator + "(" + strings.Join(placeholders, ", ") + ")", args, updatedArg, nil
+		return field + operator + "(" + strings.Join(placeholders, ", ") + ")", args, nextArg, nil
 	default:
 		return "", nil, argIndex, qb.NewError(
 			fmt.Errorf("unsupported operator %q", predicate.Op),
 			qb.WithStage(qb.StageCompile),
 			qb.WithCode(qb.CodeUnsupportedOperator),
-			qb.WithField(field),
+			qb.WithField(predicate.Field),
 			qb.WithOperator(predicate.Op),
 		)
 	}
@@ -387,187 +353,6 @@ func (c Compiler) compileFields(fields []string, kind string) (string, error) {
 		parts = append(parts, c.dialect.QuoteIdentifier(field))
 	}
 	return strings.Join(parts, ", "), nil
-}
-
-func (c Compiler) compileProjectionList(fields []string, exprs []qb.ValueExpr, kind string, argIndex int) (string, []any, int, error) {
-	parts := make([]string, 0, len(fields)+len(exprs))
-	args := make([]any, 0)
-	nextArg := argIndex
-
-	for _, field := range fields {
-		field = strings.TrimSpace(field)
-		if field == "" {
-			return "", nil, argIndex, qb.NewError(
-				fmt.Errorf("%s field cannot be empty", kind),
-				qb.WithStage(qb.StageCompile),
-				qb.WithCode(qb.CodeInvalidQuery),
-			)
-		}
-		parts = append(parts, c.dialect.QuoteIdentifier(field))
-	}
-
-	for _, expr := range exprs {
-		part, partArgs, updatedArg, err := c.compileValueExpr(expr, nextArg)
-		if err != nil {
-			return "", nil, argIndex, err
-		}
-		parts = append(parts, part)
-		args = append(args, partArgs...)
-		nextArg = updatedArg
-	}
-
-	return strings.Join(parts, ", "), args, nextArg, nil
-}
-
-func (c Compiler) compileBinaryPredicate(leftSQL string, leftArgs []any, nextArg int, value any, operator string, originalArg int) (string, []any, int, error) {
-	rightSQL, rightArgs, updatedArg, err := c.compileComparableValue(value, nextArg)
-	if err != nil {
-		return "", nil, originalArg, err
-	}
-	return leftSQL + " " + operator + " " + rightSQL, append(leftArgs, rightArgs...), updatedArg, nil
-}
-
-func (c Compiler) compileLikePredicate(leftSQL string, leftArgs []any, nextArg int, value any, prefix, suffix string, originalArg int) (string, []any, int, error) {
-	if expr, ok := qb.AsValueExpr(value); ok {
-		pattern := expr
-		if prefix != "" || suffix != "" {
-			pattern = qb.Call("concat", qb.Lit(prefix), expr, qb.Lit(suffix))
-		}
-		rightSQL, rightArgs, updatedArg, err := c.compileValueExpr(pattern, nextArg)
-		if err != nil {
-			return "", nil, originalArg, err
-		}
-		return leftSQL + " LIKE " + rightSQL, append(leftArgs, rightArgs...), updatedArg, nil
-	}
-
-	rightSQL, rightArgs, updatedArg, err := c.compileComparableValue(prefix+fmt.Sprint(value)+suffix, nextArg)
-	if err != nil {
-		return "", nil, originalArg, err
-	}
-	return leftSQL + " LIKE " + rightSQL, append(leftArgs, rightArgs...), updatedArg, nil
-}
-
-func (c Compiler) compileComparableValue(value any, argIndex int) (string, []any, int, error) {
-	if expr, ok := qb.AsValueExpr(value); ok {
-		return c.compileValueExpr(expr, argIndex)
-	}
-	return c.compileValueExpr(qb.Lit(value), argIndex)
-}
-
-func (c Compiler) compileValueExpr(expr qb.ValueExpr, argIndex int) (string, []any, int, error) {
-	switch typed := expr.(type) {
-	case nil:
-		return "", nil, argIndex, qb.NewError(
-			fmt.Errorf("expression cannot be nil"),
-			qb.WithStage(qb.StageCompile),
-			qb.WithCode(qb.CodeInvalidQuery),
-		)
-	case qb.Ref:
-		field := string(typed)
-		if strings.TrimSpace(field) == "" {
-			return "", nil, argIndex, qb.NewError(
-				fmt.Errorf("expression field cannot be empty"),
-				qb.WithStage(qb.StageCompile),
-				qb.WithCode(qb.CodeInvalidQuery),
-			)
-		}
-		return c.dialect.QuoteIdentifier(field), nil, argIndex, nil
-	case qb.Literal:
-		if typed.Value == nil {
-			return "NULL", nil, argIndex, nil
-		}
-		return c.dialect.Placeholder(argIndex), []any{typed.Value}, argIndex + 1, nil
-	case qb.CallExpr:
-		name := strings.TrimSpace(typed.Name)
-		if name == "" {
-			return "", nil, argIndex, qb.NewError(
-				fmt.Errorf("function name cannot be empty"),
-				qb.WithStage(qb.StageCompile),
-				qb.WithCode(qb.CodeInvalidQuery),
-			)
-		}
-
-		args := make([]string, len(typed.Args))
-		values := make([]any, 0)
-		nextArg := argIndex
-		for i, arg := range typed.Args {
-			part, partArgs, updatedArg, err := c.compileValueExpr(arg, nextArg)
-			if err != nil {
-				return "", nil, argIndex, err
-			}
-			args[i] = part
-			values = append(values, partArgs...)
-			nextArg = updatedArg
-		}
-
-		sql, err := c.compileFunction(name, args)
-		if err != nil {
-			return "", nil, argIndex, err
-		}
-
-		return sql, values, nextArg, nil
-	default:
-		return "", nil, argIndex, qb.NewError(
-			fmt.Errorf("unsupported value expression %T", expr),
-			qb.WithStage(qb.StageCompile),
-			qb.WithCode(qb.CodeInvalidQuery),
-		)
-	}
-}
-
-func (c Compiler) compileFunction(name string, args []string) (string, error) {
-	if dialect, ok := c.dialect.(FunctionDialect); ok {
-		return dialect.CompileFunction(name, args)
-	}
-	return compileFunctionName(name, args)
-}
-
-func compileFunctionName(name string, args []string) (string, error) {
-	if strings.TrimSpace(name) == "" {
-		return "", fmt.Errorf("function name cannot be empty")
-	}
-
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "concat":
-		return "(" + strings.Join(args, " || ") + ")", nil
-	default:
-		return strings.ToUpper(strings.TrimSpace(name)) + "(" + strings.Join(args, ", ") + ")", nil
-	}
-}
-
-func predicateLeftExpr(predicate qb.Predicate) (qb.ValueExpr, string) {
-	if predicate.Left != nil {
-		return predicate.Left, predicateFieldName(predicate)
-	}
-	if predicate.Field == "" {
-		return nil, ""
-	}
-	return qb.Field(predicate.Field), predicate.Field
-}
-
-func predicateFieldName(predicate qb.Predicate) string {
-	if predicate.Field != "" {
-		return predicate.Field
-	}
-	field, ok := qb.SingleRef(predicate.Left)
-	if !ok {
-		return ""
-	}
-	return field
-}
-
-func isNilPredicateValue(value any) bool {
-	if value == nil {
-		return true
-	}
-
-	expr, ok := qb.AsValueExpr(value)
-	if !ok {
-		return false
-	}
-
-	literal, ok := expr.(qb.Literal)
-	return ok && literal.Value == nil
 }
 
 func quoteDottedIdentifier(identifier string) string {

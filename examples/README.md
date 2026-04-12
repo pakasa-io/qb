@@ -20,6 +20,5 @@ Examples are ordered so you can read them progressively:
 - [`07-cursor-token`](./07-cursor-token): rewrite an opaque cursor token into deterministic filters
 - [`08-composite-cursor`](./08-composite-cursor): use structured cursor values for stable multi-column pagination
 - [`09-rewrite-pipeline`](./09-rewrite-pipeline): compose global query transformers for tenancy and soft deletes
-- [`10-functions`](./10-functions): apply functions to fields, values, and select/group expressions
 
 The long-form narrative guide still lives in [`docs/EXAMPLES.md`](../docs/EXAMPLES.md).

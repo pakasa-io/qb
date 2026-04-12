@@ -296,36 +296,27 @@ func (s Schema) Normalize(query qb.Query) (qb.Query, error) {
 			return expr, nil
 		}
 
-		if predicate.Left != nil {
-			left, err := s.normalizeFilterExpr(predicate.Left, predicate.Op, qb.StageNormalize)
-			if err != nil {
-				return nil, err
-			}
-			predicate.Left = left
-			predicate.Field = ""
-		} else {
-			field, err := s.ResolveFilterField(predicate.Field, predicate.Op)
-			if err != nil {
-				return nil, qb.WrapError(
-					err,
-					qb.WithStage(qb.StageNormalize),
-					qb.WithField(predicate.Field),
-					qb.WithOperator(predicate.Op),
-				)
-			}
-			predicate.Field = field
-		}
-
-		value, err := s.normalizePredicateValue(predicate, qb.StageNormalize)
+		field, err := s.ResolveFilterField(predicate.Field, predicate.Op)
 		if err != nil {
 			return nil, qb.WrapError(
 				err,
 				qb.WithStage(qb.StageNormalize),
-				qb.WithField(predicatePrimaryField(predicate)),
+				qb.WithField(predicate.Field),
 				qb.WithOperator(predicate.Op),
 			)
 		}
 
+		value, err := s.decodePredicateValue(field, predicate.Op, predicate.Value)
+		if err != nil {
+			return nil, qb.WrapError(
+				err,
+				qb.WithStage(qb.StageNormalize),
+				qb.WithField(field),
+				qb.WithOperator(predicate.Op),
+			)
+		}
+
+		predicate.Field = field
 		predicate.Value = value
 		return predicate, nil
 	})
@@ -369,23 +360,11 @@ func (s Schema) Normalize(query qb.Query) (qb.Query, error) {
 	}
 	normalized.Selects = selects
 
-	selectExprs, err := s.normalizeExprs(normalized.SelectExprs, s.ResolveField, qb.StageNormalize)
-	if err != nil {
-		return qb.Query{}, err
-	}
-	normalized.SelectExprs = selectExprs
-
 	groupBy, err := s.normalizeFields(normalized.GroupBy)
 	if err != nil {
 		return qb.Query{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageNormalize))
 	}
 	normalized.GroupBy = groupBy
-
-	groupExprs, err := s.normalizeExprs(normalized.GroupExprs, s.ResolveField, qb.StageNormalize)
-	if err != nil {
-		return qb.Query{}, err
-	}
-	normalized.GroupExprs = groupExprs
 
 	if _, _, err := normalized.ResolvedPagination(); err != nil {
 		return qb.Query{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageNormalize))
@@ -408,31 +387,17 @@ func (s Schema) ToStorage(query qb.Query) (qb.Query, error) {
 			return expr, nil
 		}
 
-		if predicate.Left != nil {
-			left, err := s.projectExpr(predicate.Left, s.ResolveStorageField, qb.StageRewrite)
-			if err != nil {
-				return nil, err
-			}
-			predicate.Left = left
-		} else {
-			field, err := s.ResolveStorageField(predicate.Field)
-			if err != nil {
-				return nil, qb.WrapError(
-					err,
-					qb.WithStage(qb.StageRewrite),
-					qb.WithField(predicate.Field),
-					qb.WithOperator(predicate.Op),
-				)
-			}
-
-			predicate.Field = field
-		}
-
-		value, err := s.projectPredicateValue(predicate.Value, s.ResolveStorageField, qb.StageRewrite)
+		field, err := s.ResolveStorageField(predicate.Field)
 		if err != nil {
-			return nil, err
+			return nil, qb.WrapError(
+				err,
+				qb.WithStage(qb.StageRewrite),
+				qb.WithField(predicate.Field),
+				qb.WithOperator(predicate.Op),
+			)
 		}
-		predicate.Value = value
+
+		predicate.Field = field
 		return predicate, nil
 	})
 	if err != nil {
@@ -463,23 +428,11 @@ func (s Schema) ToStorage(query qb.Query) (qb.Query, error) {
 	}
 	projected.Selects = selects
 
-	selectExprs, err := s.projectExprs(projected.SelectExprs, s.ResolveStorageField, qb.StageRewrite)
-	if err != nil {
-		return qb.Query{}, err
-	}
-	projected.SelectExprs = selectExprs
-
 	groupBy, err := s.projectFields(projected.GroupBy)
 	if err != nil {
 		return qb.Query{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageRewrite))
 	}
 	projected.GroupBy = groupBy
-
-	groupExprs, err := s.projectExprs(projected.GroupExprs, s.ResolveStorageField, qb.StageRewrite)
-	if err != nil {
-		return qb.Query{}, err
-	}
-	projected.GroupExprs = groupExprs
 
 	return projected, nil
 }
@@ -535,149 +488,6 @@ func (s Schema) decodePredicateValue(field string, op qb.Operator, value any) (a
 	default:
 		return s.DecodeValue(field, op, value)
 	}
-}
-
-func (s Schema) normalizePredicateValue(predicate qb.Predicate, stage qb.ErrorStage) (any, error) {
-	if expr, ok := qb.AsValueExpr(predicate.Value); ok {
-		return s.normalizeFilterExpr(expr, predicate.Op, stage)
-	}
-
-	field := predicatePrimaryField(predicate)
-	if field == "" {
-		return qb.CloneValue(predicate.Value), nil
-	}
-
-	switch predicate.Op {
-	case qb.OpIn, qb.OpNotIn:
-		values, ok := anySlice(predicate.Value)
-		if !ok {
-			return nil, qb.NewError(
-				fmt.Errorf("%s requires a list value", predicate.Op),
-				qb.WithCode(qb.CodeInvalidValue),
-				qb.WithField(field),
-				qb.WithOperator(predicate.Op),
-			)
-		}
-
-		decoded := make([]any, len(values))
-		for i, item := range values {
-			if expr, ok := qb.AsValueExpr(item); ok {
-				rewritten, err := s.normalizeFilterExpr(expr, predicate.Op, stage)
-				if err != nil {
-					return nil, err
-				}
-				decoded[i] = rewritten
-				continue
-			}
-
-			value, err := s.DecodeValue(field, predicate.Op, item)
-			if err != nil {
-				return nil, err
-			}
-			decoded[i] = value
-		}
-		return decoded, nil
-	default:
-		return s.decodePredicateValue(field, predicate.Op, predicate.Value)
-	}
-}
-
-func (s Schema) normalizeFilterExpr(expr qb.ValueExpr, op qb.Operator, stage qb.ErrorStage) (qb.ValueExpr, error) {
-	return s.rewriteExpr(expr, func(field string) (string, error) {
-		return s.ResolveFilterField(field, op)
-	}, stage)
-}
-
-func (s Schema) normalizeExprs(exprs []qb.ValueExpr, resolver func(string) (string, error), stage qb.ErrorStage) ([]qb.ValueExpr, error) {
-	if len(exprs) == 0 {
-		return nil, nil
-	}
-
-	normalized := make([]qb.ValueExpr, len(exprs))
-	for i, expr := range exprs {
-		rewritten, err := s.projectExpr(expr, resolver, stage)
-		if err != nil {
-			return nil, err
-		}
-		normalized[i] = rewritten
-	}
-	return normalized, nil
-}
-
-func (s Schema) projectExprs(exprs []qb.ValueExpr, resolver func(string) (string, error), stage qb.ErrorStage) ([]qb.ValueExpr, error) {
-	return s.normalizeExprs(exprs, resolver, stage)
-}
-
-func (s Schema) projectExpr(expr qb.ValueExpr, resolver func(string) (string, error), stage qb.ErrorStage) (qb.ValueExpr, error) {
-	return s.rewriteExpr(expr, resolver, stage)
-}
-
-func (s Schema) rewriteExpr(expr qb.ValueExpr, resolver func(string) (string, error), stage qb.ErrorStage) (qb.ValueExpr, error) {
-	rewritten, err := qb.RewriteValueExpr(expr, func(node qb.ValueExpr) (qb.ValueExpr, error) {
-		ref, ok := node.(qb.Ref)
-		if !ok {
-			return node, nil
-		}
-
-		field, err := resolver(string(ref))
-		if err != nil {
-			return nil, qb.WrapError(
-				err,
-				qb.WithStage(stage),
-				qb.WithField(string(ref)),
-			)
-		}
-
-		return qb.Field(field), nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return rewritten, nil
-}
-
-func (s Schema) projectPredicateValue(value any, resolver func(string) (string, error), stage qb.ErrorStage) (any, error) {
-	if expr, ok := qb.AsValueExpr(value); ok {
-		return s.projectExpr(expr, resolver, stage)
-	}
-
-	values, ok := anySlice(value)
-	if !ok {
-		return qb.CloneValue(value), nil
-	}
-
-	projected := make([]any, len(values))
-	for i, item := range values {
-		if expr, ok := qb.AsValueExpr(item); ok {
-			rewritten, err := s.projectExpr(expr, resolver, stage)
-			if err != nil {
-				return nil, err
-			}
-			projected[i] = rewritten
-			continue
-		}
-		projected[i] = qb.CloneValue(item)
-	}
-
-	return projected, nil
-}
-
-func predicatePrimaryField(predicate qb.Predicate) string {
-	if predicate.Field != "" {
-		return predicate.Field
-	}
-
-	if predicate.Left == nil {
-		return ""
-	}
-
-	field, ok := qb.SingleRef(predicate.Left)
-	if !ok {
-		return ""
-	}
-
-	return field
 }
 
 func anySlice(value any) ([]any, bool) {

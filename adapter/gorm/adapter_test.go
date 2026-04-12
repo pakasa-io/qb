@@ -237,41 +237,6 @@ func TestApplyWithSelectIncludeGroupByAndPageSize(t *testing.T) {
 	}
 }
 
-func TestApplyFunctionExpressions(t *testing.T) {
-	query, err := qb.New().
-		SelectExpr(qb.Lower(qb.Field("name")), qb.Field("age")).
-		GroupByExpr(qb.Lower(qb.Field("name"))).
-		Where(qb.And(
-			qb.Lower(qb.Field("name")).Eq("john"),
-			qb.Field("name").Eq(qb.Lower("JOHN")),
-		)).
-		Query()
-	if err != nil {
-		t.Fatalf("Query() error = %v", err)
-	}
-
-	result, err := applyAndFind(t, gormadapter.New(), query)
-	if err != nil {
-		t.Fatalf("Apply() error = %v", err)
-	}
-
-	wantSQL := "SELECT LOWER(`name`), `age` FROM `users` WHERE LOWER(`name`) = ? AND `name` = LOWER(?) GROUP BY LOWER(`name`)"
-	if result.Statement.SQL.String() != wantSQL {
-		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, result.Statement.SQL.String())
-	}
-
-	wantArgs := []any{"john", "JOHN"}
-	if len(result.Statement.Vars) != len(wantArgs) {
-		t.Fatalf("arg count mismatch: want %d, got %d", len(wantArgs), len(result.Statement.Vars))
-	}
-
-	for i := range wantArgs {
-		if result.Statement.Vars[i] != wantArgs[i] {
-			t.Fatalf("arg %d mismatch: want %#v, got %#v", i, wantArgs[i], result.Statement.Vars[i])
-		}
-	}
-}
-
 func applyAndFind(t *testing.T, adapter gormadapter.Adapter, query qb.Query) (*gorm.DB, error) {
 	t.Helper()
 
