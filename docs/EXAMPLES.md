@@ -3,7 +3,7 @@
 This document shows how to use `qb` from basic fluent builder usage to more
 advanced schema, relation, and pagination patterns.
 
-For runnable versions of these patterns, see [`examples/README.md`](../examples/README.md).
+For runnable versions of these patterns, see [`examples/README.md`](../examples/README.md), including [`10-functions`](../examples/10-functions).
 
 The core idea stays the same in every example:
 

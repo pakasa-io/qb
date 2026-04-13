@@ -11,6 +11,7 @@ Core helpers now also include:
 
 - `qb.RewriteQuery` for AST-level rewrites
 - `qb.QueryTransformer` and `qb.ComposeTransformers` for shared pipelines
+- first-class scalar expressions via `qb.F`, `qb.V`, and `qb.Func`
 - structured `qb.Error` values for parse/normalize/rewrite/compile/apply failures
 - adapter capability metadata for early validation
 
@@ -32,6 +33,10 @@ Core helpers now also include:
 
 For runnable examples, see [examples/README.md](examples/README.md).
 For the long-form narrative guide, see [docs/EXAMPLES.md](docs/EXAMPLES.md).
+
+`adapter/sql` defaults to PostgreSQL v17+ syntax. You can change the process-wide
+default at runtime with `sqladapter.SetDefaultDialect(...)` or override it for a
+single compiler with `sqladapter.WithDialect(...)`.
 
 ## Example
 
@@ -57,6 +62,16 @@ statement, err := sqladapter.New().Compile(query)
 if err != nil {
     panic(err)
 }
+```
+
+Function expressions are built from scalar expressions:
+
+```go
+query, err := qb.New().
+    SelectExpr(qb.Lower(qb.F("users.name")), qb.F("users.age")).
+    Where(qb.Lower(qb.F("users.name")).Eq("john")).
+    Where(qb.F("users.name").Eq(qb.Lower("JOHN"))).
+    Query()
 ```
 
 ## Schema-driven usage
