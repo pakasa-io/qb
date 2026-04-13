@@ -25,8 +25,9 @@ func TestRewriteQuery(t *testing.T) {
 			return expr, nil
 		}
 
-		if predicate.Field == "state" {
-			predicate.Field = "status"
+		ref, ok := predicate.Left.(qb.Ref)
+		if ok && ref.Name == "state" {
+			predicate.Left = qb.F("status")
 		}
 
 		return predicate, nil
@@ -45,8 +46,9 @@ func TestRewriteQuery(t *testing.T) {
 		t.Fatalf("expected predicate term, got %T", group.Terms[0])
 	}
 
-	if first.Field != "status" {
-		t.Fatalf("expected rewritten field to be status, got %q", first.Field)
+	ref, ok := first.Left.(qb.Ref)
+	if !ok || ref.Name != "status" {
+		t.Fatalf("expected rewritten field to be status, got %#v", first.Left)
 	}
 }
 

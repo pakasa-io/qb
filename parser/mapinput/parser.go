@@ -80,7 +80,7 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 		if err != nil {
 			return qb.Query{}, err
 		}
-		query.Selects = selects
+		query.Selects = namesToRefs(selects)
 	}
 
 	if rawInclude, ok := pickValue(input, "include"); ok {
@@ -96,7 +96,7 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 		if err != nil {
 			return qb.Query{}, err
 		}
-		query.GroupBy = groupBy
+		query.GroupBy = namesToRefs(groupBy)
 	}
 
 	if where, ok := pickObject(input, "where", "filter"); ok {
@@ -483,7 +483,7 @@ func parseSorts(node any, opts options) ([]qb.Sort, error) {
 		}
 
 		sorts = append(sorts, qb.Sort{
-			Field:     resolvedField,
+			Expr:      qb.F(resolvedField),
 			Direction: direction,
 		})
 	}
@@ -507,6 +507,19 @@ func parseNames(node any, path string) ([]string, error) {
 	}
 
 	return names, nil
+}
+
+func namesToRefs(values []string) []qb.Scalar {
+	if len(values) == 0 {
+		return nil
+	}
+
+	out := make([]qb.Scalar, len(values))
+	for i, value := range values {
+		out[i] = qb.F(value)
+	}
+
+	return out
 }
 
 func parseCursor(node any, path string) (*qb.Cursor, error) {

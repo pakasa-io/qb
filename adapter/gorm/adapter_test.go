@@ -112,9 +112,17 @@ func TestApplyWithCustomPredicateCompiler(t *testing.T) {
 		t,
 		gormadapter.New(
 			gormadapter.WithPredicateCompiler(qb.OpContains, func(field string, predicate qb.Predicate) (clause.Expression, error) {
+				operand, ok := predicate.Right.(qb.ScalarOperand)
+				if !ok {
+					return nil, errors.New("expected scalar operand")
+				}
+				literal, ok := operand.Expr.(qb.Literal)
+				if !ok {
+					return nil, errors.New("expected literal operand")
+				}
 				return clause.Expr{
 					SQL:  "LOWER(" + field + ") LIKE LOWER(?)",
-					Vars: []interface{}{"%" + predicate.Value.(string) + "%"},
+					Vars: []interface{}{"%" + literal.Value.(string) + "%"},
 				}, nil
 			}),
 		),
@@ -133,9 +141,9 @@ func TestApplyWithCustomPredicateCompiler(t *testing.T) {
 func TestScopeAddsError(t *testing.T) {
 	query := qb.Query{
 		Filter: qb.Predicate{
-			Field: "status",
+			Left:  qb.F("status"),
 			Op:    qb.Operator("bogus"),
-			Value: "active",
+			Right: qb.ScalarOperand{Expr: qb.V("active")},
 		},
 	}
 
@@ -234,6 +242,42 @@ func TestApplyWithSelectIncludeGroupByAndPageSize(t *testing.T) {
 	wantSQL := "SELECT `status`,`role` FROM `users` GROUP BY `status`,`role` ORDER BY `status` LIMIT 10 OFFSET 10"
 	if result.Statement.SQL.String() != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, result.Statement.SQL.String())
+	}
+}
+
+func TestApplyWithFunctionExpressions(t *testing.T) {
+	query, err := qb.New().
+		SelectExpr(qb.Lower(qb.F("name")), qb.F("age")).
+		GroupByExpr(qb.Lower(qb.F("name"))).
+		SortByExpr(qb.Lower(qb.F("name")), qb.Asc).
+		Where(qb.And(
+			qb.Lower(qb.F("name")).Eq("john"),
+			qb.F("name").Eq(qb.Lower("JOHN")),
+		)).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	result, err := applyAndFind(t, gormadapter.New(), query)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	wantSQL := "SELECT LOWER(\"name\"), \"age\" FROM `users` WHERE LOWER(\"name\") = ? AND \"name\" = LOWER(?) GROUP BY LOWER(\"name\") ORDER BY LOWER(\"name\") ASC"
+	if result.Statement.SQL.String() != wantSQL {
+		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, result.Statement.SQL.String())
+	}
+
+	wantArgs := []any{"john", "JOHN"}
+	if len(result.Statement.Vars) != len(wantArgs) {
+		t.Fatalf("arg count mismatch: want %d, got %d", len(wantArgs), len(result.Statement.Vars))
+	}
+
+	for i := range wantArgs {
+		if result.Statement.Vars[i] != wantArgs[i] {
+			t.Fatalf("arg %d mismatch: want %#v, got %#v", i, wantArgs[i], result.Statement.Vars[i])
+		}
 	}
 }
 

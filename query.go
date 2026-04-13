@@ -10,7 +10,7 @@ const (
 
 // Sort describes a field ordering.
 type Sort struct {
-	Field     string
+	Expr      Scalar
 	Direction Direction
 }
 
@@ -37,9 +37,9 @@ func (c Cursor) Clone() Cursor {
 // Query is the database-agnostic representation shared between parsers and
 // adapters.
 type Query struct {
-	Selects  []string
+	Selects  []Scalar
 	Includes []string
-	GroupBy  []string
+	GroupBy  []Scalar
 	Filter   Expr
 	Sorts    []Sort
 	Limit    *int
@@ -55,11 +55,11 @@ type QueryTransformer func(Query) (Query, error)
 // Clone returns a safe copy of the query.
 func (q Query) Clone() Query {
 	clone := Query{
-		Selects:  append([]string(nil), q.Selects...),
+		Selects:  cloneScalars(q.Selects),
 		Includes: append([]string(nil), q.Includes...),
-		GroupBy:  append([]string(nil), q.GroupBy...),
+		GroupBy:  cloneScalars(q.GroupBy),
 		Filter:   CloneExpr(q.Filter),
-		Sorts:    append([]Sort(nil), q.Sorts...),
+		Sorts:    cloneSorts(q.Sorts),
 	}
 
 	if q.Limit != nil {
@@ -214,4 +214,31 @@ func (e invalidPagination) Error() string {
 // ErrInvalidPagination creates a consistent pagination validation error.
 func ErrInvalidPagination(message string) error {
 	return invalidPagination(message)
+}
+
+func cloneScalars(values []Scalar) []Scalar {
+	if len(values) == 0 {
+		return nil
+	}
+
+	cloned := make([]Scalar, len(values))
+	for i, value := range values {
+		cloned[i] = CloneScalar(value)
+	}
+	return cloned
+}
+
+func cloneSorts(values []Sort) []Sort {
+	if len(values) == 0 {
+		return nil
+	}
+
+	cloned := make([]Sort, len(values))
+	for i, value := range values {
+		cloned[i] = Sort{
+			Expr:      CloneScalar(value.Expr),
+			Direction: value.Direction,
+		}
+	}
+	return cloned
 }

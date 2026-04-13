@@ -34,7 +34,7 @@ func TestBuilderProducesIndependentQuery(t *testing.T) {
 		t.Fatalf("expected 1 sort, got %d", len(query.Sorts))
 	}
 
-	if len(query.Selects) != 2 || query.Selects[0] != "id" || query.Selects[1] != "status" {
+	if len(query.Selects) != 2 || refName(query.Selects[0]) != "id" || refName(query.Selects[1]) != "status" {
 		t.Fatalf("unexpected selects: %#v", query.Selects)
 	}
 
@@ -42,11 +42,11 @@ func TestBuilderProducesIndependentQuery(t *testing.T) {
 		t.Fatalf("unexpected includes: %#v", query.Includes)
 	}
 
-	if len(query.GroupBy) != 1 || query.GroupBy[0] != "status" {
+	if len(query.GroupBy) != 1 || refName(query.GroupBy[0]) != "status" {
 		t.Fatalf("unexpected group_by: %#v", query.GroupBy)
 	}
 
-	if query.Sorts[0].Field != "created_at" || query.Sorts[0].Direction != qb.Desc {
+	if refName(query.Sorts[0].Expr) != "created_at" || query.Sorts[0].Direction != qb.Desc {
 		t.Fatalf("unexpected sort: %+v", query.Sorts[0])
 	}
 
@@ -72,16 +72,16 @@ func TestBuilderProducesIndependentQuery(t *testing.T) {
 	}
 
 	clone := query.Clone()
-	clone.Sorts[0].Field = "mutated"
-	clone.Selects[0] = "mutated"
+	clone.Sorts[0].Expr = qb.F("mutated")
+	clone.Selects[0] = qb.F("mutated")
 	clone.Includes[0] = "mutated"
-	clone.GroupBy[0] = "mutated"
+	clone.GroupBy[0] = qb.F("mutated")
 
-	if query.Sorts[0].Field != "created_at" {
+	if refName(query.Sorts[0].Expr) != "created_at" {
 		t.Fatal("expected Clone to protect sort slice")
 	}
 
-	if query.Selects[0] != "id" || query.Includes[0] != "Customer" || query.GroupBy[0] != "status" {
+	if refName(query.Selects[0]) != "id" || query.Includes[0] != "Customer" || refName(query.GroupBy[0]) != "status" {
 		t.Fatal("expected Clone to protect metadata slices")
 	}
 
@@ -103,8 +103,14 @@ func TestBuilderProducesIndependentQuery(t *testing.T) {
 		t.Fatalf("expected original first term to be a predicate, got %T", originalGroup.Terms[0])
 	}
 
-	if predicate.Value != "active" {
-		t.Fatalf("expected original filter tree to remain unchanged, got %#v", predicate.Value)
+	operand, ok := predicate.Right.(qb.ScalarOperand)
+	if !ok {
+		t.Fatalf("expected scalar operand, got %T", predicate.Right)
+	}
+
+	literal, ok := operand.Expr.(qb.Literal)
+	if !ok || literal.Value != "active" {
+		t.Fatalf("expected original filter tree to remain unchanged, got %#v", predicate.Right)
 	}
 }
 
@@ -162,4 +168,57 @@ func TestBuilderRejectsCursorWithoutSize(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected cursor without size error")
 	}
+}
+
+func TestBuilderSupportsFunctionExpressions(t *testing.T) {
+	query, err := qb.New().
+		SelectExpr(qb.Lower(qb.F("users.name")), qb.F("users.age")).
+		GroupByExpr(qb.Lower(qb.F("users.name"))).
+		SortByExpr(qb.Lower(qb.F("users.name")), qb.Asc).
+		Where(qb.And(
+			qb.Lower(qb.F("users.name")).Eq("john"),
+			qb.F("users.name").Eq(qb.Lower("JOHN")),
+		)).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	if len(query.Selects) != 2 {
+		t.Fatalf("expected 2 select expressions, got %d", len(query.Selects))
+	}
+
+	if _, ok := query.Selects[0].(qb.Call); !ok {
+		t.Fatalf("expected first select to be a function call, got %T", query.Selects[0])
+	}
+
+	if len(query.GroupBy) != 1 {
+		t.Fatalf("expected 1 group expression, got %d", len(query.GroupBy))
+	}
+
+	if _, ok := query.Sorts[0].Expr.(qb.Call); !ok {
+		t.Fatalf("expected sort expression to be a function call, got %T", query.Sorts[0].Expr)
+	}
+
+	group, ok := query.Filter.(qb.Group)
+	if !ok {
+		t.Fatalf("expected grouped filter, got %T", query.Filter)
+	}
+
+	predicate, ok := group.Terms[1].(qb.Predicate)
+	if !ok {
+		t.Fatalf("expected predicate, got %T", group.Terms[1])
+	}
+
+	if _, ok := predicate.Right.(qb.ScalarOperand); !ok {
+		t.Fatalf("expected scalar operand, got %T", predicate.Right)
+	}
+}
+
+func refName(expr qb.Scalar) string {
+	ref, ok := expr.(qb.Ref)
+	if !ok {
+		return ""
+	}
+	return ref.Name
 }

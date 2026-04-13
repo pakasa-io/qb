@@ -99,7 +99,7 @@ func Example() {
 	fmt.Println("GORM args:", result.Statement.Vars)
 
 	// Output:
-	// SQL: SELECT "users"."status", "users"."role" WHERE (("users"."role" = ? OR "users"."role" = ?) AND "users"."age" >= ? AND "users"."status" = ?) GROUP BY "users"."status", "users"."role" ORDER BY "users"."created_at" DESC LIMIT 10 OFFSET 10
+	// SQL: SELECT "users"."status", "users"."role" WHERE (("users"."role" = $1 OR "users"."role" = $2) AND "users"."age" >= $3 AND "users"."status" = $4) GROUP BY "users"."status", "users"."role" ORDER BY "users"."created_at" DESC LIMIT 10 OFFSET 10
 	// SQL args: [admin owner 21 active]
 	// GORM: SELECT users.status,users.role FROM `example_users` WHERE (`users`.`role` = ? OR `users`.`role` = ?) AND `users`.`age` >= ? AND `users`.`status` = ? GROUP BY `users`.`status`,`users`.`role` ORDER BY `users`.`created_at` DESC LIMIT 10 OFFSET 10
 	// GORM args: [admin owner 21 active]

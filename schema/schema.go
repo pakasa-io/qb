@@ -296,28 +296,19 @@ func (s Schema) Normalize(query qb.Query) (qb.Query, error) {
 			return expr, nil
 		}
 
-		field, err := s.ResolveFilterField(predicate.Field, predicate.Op)
+		left, err := s.rewriteScalar(predicate.Left, func(field string) (string, error) {
+			return s.ResolveFilterField(field, predicate.Op)
+		}, qb.StageNormalize)
 		if err != nil {
-			return nil, qb.WrapError(
-				err,
-				qb.WithStage(qb.StageNormalize),
-				qb.WithField(predicate.Field),
-				qb.WithOperator(predicate.Op),
-			)
+			return nil, err
 		}
+		predicate.Left = left
 
-		value, err := s.decodePredicateValue(field, predicate.Op, predicate.Value)
+		right, err := s.normalizeOperand(predicate.Right, predicatePrimaryField(predicate.Left), predicate.Op)
 		if err != nil {
-			return nil, qb.WrapError(
-				err,
-				qb.WithStage(qb.StageNormalize),
-				qb.WithField(field),
-				qb.WithOperator(predicate.Op),
-			)
+			return nil, err
 		}
-
-		predicate.Field = field
-		predicate.Value = value
+		predicate.Right = right
 		return predicate, nil
 	})
 	if err != nil {
@@ -326,41 +317,37 @@ func (s Schema) Normalize(query qb.Query) (qb.Query, error) {
 
 	if len(normalized.Sorts) > 0 {
 		sorts := make([]qb.Sort, len(normalized.Sorts))
-		for i, sortField := range normalized.Sorts {
-			if sortField.Direction == "" {
-				sortField.Direction = qb.Asc
+		for i, sortExpr := range normalized.Sorts {
+			if sortExpr.Direction == "" {
+				sortExpr.Direction = qb.Asc
 			}
-			if sortField.Direction != qb.Asc && sortField.Direction != qb.Desc {
+			if sortExpr.Direction != qb.Asc && sortExpr.Direction != qb.Desc {
 				return qb.Query{}, qb.NewError(
-					fmt.Errorf("unsupported sort direction %q", sortField.Direction),
+					fmt.Errorf("unsupported sort direction %q", sortExpr.Direction),
 					qb.WithStage(qb.StageNormalize),
 					qb.WithCode(qb.CodeInvalidQuery),
-					qb.WithField(sortField.Field),
+					qb.WithField(predicatePrimaryField(sortExpr.Expr)),
 				)
 			}
 
-			resolvedField, err := s.ResolveSortField(sortField.Field)
+			expr, err := s.rewriteScalar(sortExpr.Expr, s.ResolveSortField, qb.StageNormalize)
 			if err != nil {
-				return qb.Query{}, qb.WrapError(
-					err,
-					qb.WithStage(qb.StageNormalize),
-					qb.WithField(sortField.Field),
-				)
+				return qb.Query{}, err
 			}
 
-			sortField.Field = resolvedField
-			sorts[i] = sortField
+			sortExpr.Expr = expr
+			sorts[i] = sortExpr
 		}
 		normalized.Sorts = sorts
 	}
 
-	selects, err := s.normalizeFields(normalized.Selects)
+	selects, err := s.rewriteScalars(normalized.Selects, s.ResolveField, qb.StageNormalize)
 	if err != nil {
 		return qb.Query{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageNormalize))
 	}
 	normalized.Selects = selects
 
-	groupBy, err := s.normalizeFields(normalized.GroupBy)
+	groupBy, err := s.rewriteScalars(normalized.GroupBy, s.ResolveField, qb.StageNormalize)
 	if err != nil {
 		return qb.Query{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageNormalize))
 	}
@@ -387,17 +374,17 @@ func (s Schema) ToStorage(query qb.Query) (qb.Query, error) {
 			return expr, nil
 		}
 
-		field, err := s.ResolveStorageField(predicate.Field)
+		left, err := s.rewriteScalar(predicate.Left, s.ResolveStorageField, qb.StageRewrite)
 		if err != nil {
-			return nil, qb.WrapError(
-				err,
-				qb.WithStage(qb.StageRewrite),
-				qb.WithField(predicate.Field),
-				qb.WithOperator(predicate.Op),
-			)
+			return nil, err
 		}
+		predicate.Left = left
 
-		predicate.Field = field
+		right, err := s.projectOperand(predicate.Right)
+		if err != nil {
+			return nil, err
+		}
+		predicate.Right = right
 		return predicate, nil
 	})
 	if err != nil {
@@ -406,29 +393,25 @@ func (s Schema) ToStorage(query qb.Query) (qb.Query, error) {
 
 	if len(projected.Sorts) > 0 {
 		sorts := make([]qb.Sort, len(projected.Sorts))
-		for i, sortField := range projected.Sorts {
-			storageField, err := s.ResolveStorageField(sortField.Field)
+		for i, sortExpr := range projected.Sorts {
+			expr, err := s.rewriteScalar(sortExpr.Expr, s.ResolveStorageField, qb.StageRewrite)
 			if err != nil {
-				return qb.Query{}, qb.WrapError(
-					err,
-					qb.WithStage(qb.StageRewrite),
-					qb.WithField(sortField.Field),
-				)
+				return qb.Query{}, err
 			}
 
-			sortField.Field = storageField
-			sorts[i] = sortField
+			sortExpr.Expr = expr
+			sorts[i] = sortExpr
 		}
 		projected.Sorts = sorts
 	}
 
-	selects, err := s.projectFields(projected.Selects)
+	selects, err := s.rewriteScalars(projected.Selects, s.ResolveStorageField, qb.StageRewrite)
 	if err != nil {
 		return qb.Query{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageRewrite))
 	}
 	projected.Selects = selects
 
-	groupBy, err := s.projectFields(projected.GroupBy)
+	groupBy, err := s.rewriteScalars(projected.GroupBy, s.ResolveStorageField, qb.StageRewrite)
 	if err != nil {
 		return qb.Query{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageRewrite))
 	}
@@ -459,35 +442,6 @@ func (s Schema) lookup(field string) (fieldSpec, error) {
 	}
 
 	return spec, nil
-}
-
-func (s Schema) decodePredicateValue(field string, op qb.Operator, value any) (any, error) {
-	switch op {
-	case qb.OpIn, qb.OpNotIn:
-		values, ok := anySlice(value)
-		if !ok {
-			return nil, qb.NewError(
-				fmt.Errorf("%s requires a list value", op),
-				qb.WithCode(qb.CodeInvalidValue),
-				qb.WithField(field),
-				qb.WithOperator(op),
-			)
-		}
-
-		decoded := make([]any, len(values))
-		for i, item := range values {
-			decodedValue, err := s.DecodeValue(field, op, item)
-			if err != nil {
-				return nil, err
-			}
-			decoded[i] = decodedValue
-		}
-		return decoded, nil
-	case qb.OpIsNull, qb.OpNotNull:
-		return nil, nil
-	default:
-		return s.DecodeValue(field, op, value)
-	}
 }
 
 func anySlice(value any) ([]any, bool) {
@@ -522,40 +476,131 @@ func anySlice(value any) ([]any, bool) {
 	}
 }
 
-func (s Schema) normalizeFields(fields []string) ([]string, error) {
-	if len(fields) == 0 {
+func (s Schema) normalizeOperand(operand qb.Operand, field string, op qb.Operator) (qb.Operand, error) {
+	switch typed := operand.(type) {
+	case nil:
 		return nil, nil
-	}
-
-	normalized := make([]string, len(fields))
-	for i, field := range fields {
-		resolved, err := s.ResolveField(field)
+	case qb.ScalarOperand:
+		expr, err := s.normalizeRightScalar(typed.Expr, field, op)
 		if err != nil {
-			return nil, qb.WrapError(
-				err,
-				qb.WithField(field),
-			)
+			return nil, err
 		}
-		normalized[i] = resolved
+		return qb.ScalarOperand{Expr: expr}, nil
+	case qb.ListOperand:
+		items := make([]qb.Scalar, len(typed.Items))
+		for i, item := range typed.Items {
+			expr, err := s.normalizeRightScalar(item, field, op)
+			if err != nil {
+				return nil, err
+			}
+			items[i] = expr
+		}
+		return qb.ListOperand{Items: items}, nil
+	default:
+		return typed, nil
 	}
-	return normalized, nil
 }
 
-func (s Schema) projectFields(fields []string) ([]string, error) {
-	if len(fields) == 0 {
+func (s Schema) normalizeRightScalar(expr qb.Scalar, field string, op qb.Operator) (qb.Scalar, error) {
+	return qb.RewriteScalar(expr, func(node qb.Scalar) (qb.Scalar, error) {
+		switch typed := node.(type) {
+		case qb.Ref:
+			resolved, err := s.ResolveField(typed.Name)
+			if err != nil {
+				return nil, qb.WrapError(
+					err,
+					qb.WithStage(qb.StageNormalize),
+					qb.WithField(typed.Name),
+					qb.WithOperator(op),
+				)
+			}
+			return qb.F(resolved), nil
+		case qb.Literal:
+			if field == "" {
+				return qb.V(typed.Value), nil
+			}
+			decoded, err := s.DecodeValue(field, op, typed.Value)
+			if err != nil {
+				return nil, qb.WrapError(
+					err,
+					qb.WithStage(qb.StageNormalize),
+					qb.WithField(field),
+					qb.WithOperator(op),
+				)
+			}
+			return qb.V(decoded), nil
+		default:
+			return node, nil
+		}
+	})
+}
+
+func (s Schema) projectOperand(operand qb.Operand) (qb.Operand, error) {
+	switch typed := operand.(type) {
+	case nil:
+		return nil, nil
+	case qb.ScalarOperand:
+		expr, err := s.rewriteScalar(typed.Expr, s.ResolveStorageField, qb.StageRewrite)
+		if err != nil {
+			return nil, err
+		}
+		return qb.ScalarOperand{Expr: expr}, nil
+	case qb.ListOperand:
+		items := make([]qb.Scalar, len(typed.Items))
+		for i, item := range typed.Items {
+			expr, err := s.rewriteScalar(item, s.ResolveStorageField, qb.StageRewrite)
+			if err != nil {
+				return nil, err
+			}
+			items[i] = expr
+		}
+		return qb.ListOperand{Items: items}, nil
+	default:
+		return typed, nil
+	}
+}
+
+func (s Schema) rewriteScalars(values []qb.Scalar, resolver func(string) (string, error), stage qb.ErrorStage) ([]qb.Scalar, error) {
+	if len(values) == 0 {
 		return nil, nil
 	}
 
-	projected := make([]string, len(fields))
-	for i, field := range fields {
-		resolved, err := s.ResolveStorageField(field)
+	rewritten := make([]qb.Scalar, len(values))
+	for i, value := range values {
+		expr, err := s.rewriteScalar(value, resolver, stage)
+		if err != nil {
+			return nil, err
+		}
+		rewritten[i] = expr
+	}
+
+	return rewritten, nil
+}
+
+func (s Schema) rewriteScalar(expr qb.Scalar, resolver func(string) (string, error), stage qb.ErrorStage) (qb.Scalar, error) {
+	return qb.RewriteScalar(expr, func(node qb.Scalar) (qb.Scalar, error) {
+		ref, ok := node.(qb.Ref)
+		if !ok {
+			return node, nil
+		}
+
+		resolved, err := resolver(ref.Name)
 		if err != nil {
 			return nil, qb.WrapError(
 				err,
-				qb.WithField(field),
+				qb.WithStage(stage),
+				qb.WithField(ref.Name),
 			)
 		}
-		projected[i] = resolved
+
+		return qb.F(resolved), nil
+	})
+}
+
+func predicatePrimaryField(expr qb.Scalar) string {
+	field, ok := qb.SingleRef(expr)
+	if !ok {
+		return ""
 	}
-	return projected, nil
+	return field
 }

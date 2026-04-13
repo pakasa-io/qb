@@ -36,7 +36,7 @@ func TestParse(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 
-	wantSQL := `WHERE (("role" = ? OR "role" = ?) AND "age" >= ? AND "status" = ?) ORDER BY "created_at" DESC, "name" ASC LIMIT 20 OFFSET 40`
+	wantSQL := `WHERE (("role" = $1 OR "role" = $2) AND "age" >= $3 AND "status" = $4) ORDER BY "created_at" DESC, "name" ASC LIMIT 20 OFFSET 40`
 	if statement.SQL != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
 	}
@@ -116,7 +116,7 @@ func TestParseSelectIncludeGroupByAndPageSize(t *testing.T) {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
-	if len(query.Selects) != 2 || query.Selects[0] != "id" || query.Selects[1] != "status" {
+	if len(query.Selects) != 2 || refName(query.Selects[0]) != "id" || refName(query.Selects[1]) != "status" {
 		t.Fatalf("unexpected selects: %#v", query.Selects)
 	}
 
@@ -124,7 +124,7 @@ func TestParseSelectIncludeGroupByAndPageSize(t *testing.T) {
 		t.Fatalf("unexpected includes: %#v", query.Includes)
 	}
 
-	if len(query.GroupBy) != 1 || query.GroupBy[0] != "status" {
+	if len(query.GroupBy) != 1 || refName(query.GroupBy[0]) != "status" {
 		t.Fatalf("unexpected group_by: %#v", query.GroupBy)
 	}
 
@@ -193,4 +193,12 @@ func TestParseRejectsCursorWithoutSize(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected cursor without size error")
 	}
+}
+
+func refName(expr qb.Scalar) string {
+	ref, ok := expr.(qb.Ref)
+	if !ok {
+		return ""
+	}
+	return ref.Name
 }

@@ -130,7 +130,7 @@ func (c Capabilities) Validate(stage ErrorStage, query Query) error {
 			fmt.Errorf("operator %q is not supported", predicate.Op),
 			WithStage(stage),
 			WithCode(CodeUnsupportedOperator),
-			WithField(predicate.Field),
+			WithField(scalarField(predicate.Left)),
 			WithOperator(predicate.Op),
 		)
 	})
@@ -144,4 +144,12 @@ func (c Capabilities) Validator(stage ErrorStage) QueryTransformer {
 		}
 		return query.Clone(), nil
 	}
+}
+
+func scalarField(expr Scalar) string {
+	field, ok := SingleRef(expr)
+	if !ok {
+		return ""
+	}
+	return field
 }

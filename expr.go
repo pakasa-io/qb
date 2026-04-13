@@ -1,7 +1,5 @@
 package qb
 
-import "reflect"
-
 // Operator describes a comparison operation.
 type Operator string
 
@@ -30,16 +28,17 @@ const (
 	OrGroup  GroupKind = "or"
 )
 
-// Expr is a node in the query AST.
+// Expr is a node in the logical query AST.
 type Expr interface {
 	exprNode()
 }
 
-// Predicate matches a field using an operator and optional value.
+// Predicate matches a scalar expression using an operator and optional
+// operand.
 type Predicate struct {
-	Field string
+	Left  Scalar
 	Op    Operator
-	Value any
+	Right Operand
 }
 
 func (Predicate) exprNode() {}
@@ -58,70 +57,6 @@ type Negation struct {
 }
 
 func (Negation) exprNode() {}
-
-// Ref is a field reference used by the fluent helpers.
-type Ref string
-
-// Field references a field in a predicate.
-func Field(name string) Ref {
-	return Ref(name)
-}
-
-func (r Ref) Eq(value any) Expr {
-	return Predicate{Field: string(r), Op: OpEq, Value: value}
-}
-
-func (r Ref) Ne(value any) Expr {
-	return Predicate{Field: string(r), Op: OpNe, Value: value}
-}
-
-func (r Ref) Gt(value any) Expr {
-	return Predicate{Field: string(r), Op: OpGt, Value: value}
-}
-
-func (r Ref) Gte(value any) Expr {
-	return Predicate{Field: string(r), Op: OpGte, Value: value}
-}
-
-func (r Ref) Lt(value any) Expr {
-	return Predicate{Field: string(r), Op: OpLt, Value: value}
-}
-
-func (r Ref) Lte(value any) Expr {
-	return Predicate{Field: string(r), Op: OpLte, Value: value}
-}
-
-func (r Ref) In(values ...any) Expr {
-	return Predicate{Field: string(r), Op: OpIn, Value: flattenValues(values)}
-}
-
-func (r Ref) NotIn(values ...any) Expr {
-	return Predicate{Field: string(r), Op: OpNotIn, Value: flattenValues(values)}
-}
-
-func (r Ref) Like(value any) Expr {
-	return Predicate{Field: string(r), Op: OpLike, Value: value}
-}
-
-func (r Ref) Contains(value any) Expr {
-	return Predicate{Field: string(r), Op: OpContains, Value: value}
-}
-
-func (r Ref) Prefix(value any) Expr {
-	return Predicate{Field: string(r), Op: OpPrefix, Value: value}
-}
-
-func (r Ref) Suffix(value any) Expr {
-	return Predicate{Field: string(r), Op: OpSuffix, Value: value}
-}
-
-func (r Ref) IsNull() Expr {
-	return Predicate{Field: string(r), Op: OpIsNull}
-}
-
-func (r Ref) NotNull() Expr {
-	return Predicate{Field: string(r), Op: OpNotNull}
-}
 
 // And combines expressions with logical AND and flattens nested AND groups.
 func And(exprs ...Expr) Expr {
@@ -142,7 +77,7 @@ func Not(expr Expr) Expr {
 	return Negation{Expr: expr}
 }
 
-// Walk traverses the query AST in pre-order.
+// Walk traverses the logical expression tree in pre-order.
 func Walk(expr Expr, visit func(Expr) error) error {
 	if expr == nil || visit == nil {
 		return nil
@@ -175,7 +110,11 @@ func CloneExpr(expr Expr) Expr {
 	case nil:
 		return nil
 	case Predicate:
-		return typed
+		return Predicate{
+			Left:  CloneScalar(typed.Left),
+			Op:    typed.Op,
+			Right: CloneOperand(typed.Right),
+		}
 	case Group:
 		clone := Group{
 			Kind:  typed.Kind,
@@ -216,47 +155,4 @@ func group(kind GroupKind, exprs ...Expr) Expr {
 	default:
 		return Group{Kind: kind, Terms: terms}
 	}
-}
-
-func flattenValues(values []any) []any {
-	if len(values) == 1 {
-		if flattened, ok := anySlice(values[0]); ok {
-			return flattened
-		}
-	}
-
-	return append([]any(nil), values...)
-}
-
-func anySlice(value any) ([]any, bool) {
-	if value == nil {
-		return nil, false
-	}
-
-	switch typed := value.(type) {
-	case []any:
-		return append([]any(nil), typed...), true
-	case []string:
-		out := make([]any, len(typed))
-		for i, item := range typed {
-			out[i] = item
-		}
-		return out, true
-	}
-
-	rv := reflect.ValueOf(value)
-	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
-		return nil, false
-	}
-
-	if rv.Type().Elem().Kind() == reflect.Uint8 {
-		return nil, false
-	}
-
-	out := make([]any, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		out[i] = rv.Index(i).Interface()
-	}
-
-	return out, true
 }

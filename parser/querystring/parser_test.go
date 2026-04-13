@@ -66,7 +66,7 @@ func TestParseTopLevelConstructs(t *testing.T) {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
-	if len(query.Selects) != 2 || query.Selects[0] != "id" || query.Selects[1] != "status" {
+	if len(query.Selects) != 2 || refName(query.Selects[0]) != "id" || refName(query.Selects[1]) != "status" {
 		t.Fatalf("unexpected selects: %#v", query.Selects)
 	}
 
@@ -74,7 +74,7 @@ func TestParseTopLevelConstructs(t *testing.T) {
 		t.Fatalf("unexpected includes: %#v", query.Includes)
 	}
 
-	if len(query.GroupBy) != 1 || query.GroupBy[0] != "status" {
+	if len(query.GroupBy) != 1 || refName(query.GroupBy[0]) != "status" {
 		t.Fatalf("unexpected group_by: %#v", query.GroupBy)
 	}
 
@@ -124,4 +124,12 @@ func TestParseCursor(t *testing.T) {
 	if offset != nil {
 		t.Fatalf("expected nil offset, got %v", offset)
 	}
+}
+
+func refName(expr qb.Scalar) string {
+	ref, ok := expr.(qb.Ref)
+	if !ok {
+		return ""
+	}
+	return ref.Name
 }

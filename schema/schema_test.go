@@ -65,7 +65,7 @@ func TestSchemaDrivenParsingAndCompilation(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 
-	wantSQL := `WHERE ("users"."age" >= ? AND "users"."status" = ?) ORDER BY "users"."created_at" DESC`
+	wantSQL := `WHERE ("users"."age" >= $1 AND "users"."status" = $2) ORDER BY "users"."created_at" DESC`
 	if statement.SQL != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
 	}
@@ -108,7 +108,7 @@ func TestNormalizeBuilderQuery(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 
-	wantSQL := `SELECT "status" WHERE "status" = ? GROUP BY "status" ORDER BY "created_at" DESC`
+	wantSQL := `SELECT "status" WHERE "status" = $1 GROUP BY "status" ORDER BY "created_at" DESC`
 	if statement.SQL != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
 	}
@@ -195,7 +195,7 @@ func TestToStorageMapsCanonicalFields(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 
-	wantSQL := `SELECT "users"."status" WHERE "users"."status" = ? GROUP BY "users"."status" ORDER BY "users"."created_at" DESC`
+	wantSQL := `SELECT "users"."status" WHERE "users"."status" = $1 GROUP BY "users"."status" ORDER BY "users"."created_at" DESC`
 	if statement.SQL != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
 	}
@@ -225,5 +225,40 @@ func TestNormalizeReturnsStructuredError(t *testing.T) {
 
 	if diagnostic.Stage != qb.StageNormalize || diagnostic.Code != qb.CodeUnsupportedOperator {
 		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+}
+
+func TestToStorageRewritesFunctionExpressions(t *testing.T) {
+	userSchema := schema.MustNew(
+		schema.Define("name", schema.Storage("users.name"), schema.Sortable()),
+		schema.Define("age", schema.Storage("users.age")),
+	)
+
+	query, err := qb.New().
+		SelectExpr(qb.Lower(qb.F("name")), qb.F("age")).
+		GroupByExpr(qb.Lower(qb.F("name"))).
+		SortByExpr(qb.Lower(qb.F("name")), qb.Asc).
+		Where(qb.And(
+			qb.Lower(qb.F("name")).Eq("john"),
+			qb.F("name").Eq(qb.Lower("JOHN")),
+		)).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	projected, err := userSchema.ToStorage(query)
+	if err != nil {
+		t.Fatalf("ToStorage() error = %v", err)
+	}
+
+	statement, err := sqladapter.New().Compile(projected)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	wantSQL := `SELECT LOWER("users"."name"), "users"."age" WHERE (LOWER("users"."name") = $1 AND "users"."name" = LOWER($2)) GROUP BY LOWER("users"."name") ORDER BY LOWER("users"."name") ASC`
+	if statement.SQL != wantSQL {
+		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
 	}
 }

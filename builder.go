@@ -30,7 +30,16 @@ func (b Builder) Where(expr Expr) Builder {
 
 // Select appends projected fields.
 func (b Builder) Select(fields ...string) Builder {
-	appended, err := appendFields(b.query.Selects, "select", fields...)
+	scalars := make([]Scalar, len(fields))
+	for i, field := range fields {
+		scalars[i] = F(field)
+	}
+	return b.SelectExpr(scalars...)
+}
+
+// SelectExpr appends projected scalar expressions.
+func (b Builder) SelectExpr(exprs ...Scalar) Builder {
+	appended, err := appendScalars(b.query.Selects, "select", exprs...)
 	if err != nil {
 		b.err = err
 		return b
@@ -43,6 +52,11 @@ func (b Builder) Select(fields ...string) Builder {
 // Pick is an alias for Select.
 func (b Builder) Pick(fields ...string) Builder {
 	return b.Select(fields...)
+}
+
+// PickExpr is an alias for SelectExpr.
+func (b Builder) PickExpr(exprs ...Scalar) Builder {
+	return b.SelectExpr(exprs...)
 }
 
 // Include appends eager-load/include hints.
@@ -59,7 +73,16 @@ func (b Builder) Include(paths ...string) Builder {
 
 // GroupBy appends grouping fields.
 func (b Builder) GroupBy(fields ...string) Builder {
-	appended, err := appendFields(b.query.GroupBy, "group_by", fields...)
+	scalars := make([]Scalar, len(fields))
+	for i, field := range fields {
+		scalars[i] = F(field)
+	}
+	return b.GroupByExpr(scalars...)
+}
+
+// GroupByExpr appends grouping expressions.
+func (b Builder) GroupByExpr(exprs ...Scalar) Builder {
+	appended, err := appendScalars(b.query.GroupBy, "group_by", exprs...)
 	if err != nil {
 		b.err = err
 		return b
@@ -71,12 +94,17 @@ func (b Builder) GroupBy(fields ...string) Builder {
 
 // SortBy appends a sort clause.
 func (b Builder) SortBy(field string, direction Direction) Builder {
+	return b.SortByExpr(F(field), direction)
+}
+
+// SortByExpr appends a sort expression.
+func (b Builder) SortByExpr(expr Scalar, direction Direction) Builder {
 	if b.err != nil {
 		return b
 	}
 
-	if field == "" {
-		b.err = fmt.Errorf("qb: sort field cannot be empty")
+	if expr == nil {
+		b.err = fmt.Errorf("qb: sort expression cannot be nil")
 		return b
 	}
 
@@ -90,7 +118,7 @@ func (b Builder) SortBy(field string, direction Direction) Builder {
 	}
 
 	b.query.Sorts = append(append([]Sort(nil), b.query.Sorts...), Sort{
-		Field:     field,
+		Expr:      CloneScalar(expr),
 		Direction: direction,
 	})
 	return b
@@ -209,6 +237,21 @@ func (b Builder) Query() (Query, error) {
 
 func intPtr(v int) *int {
 	return &v
+}
+
+func appendScalars(target []Scalar, label string, exprs ...Scalar) ([]Scalar, error) {
+	appended := cloneScalars(target)
+	for _, expr := range exprs {
+		if expr == nil {
+			return nil, fmt.Errorf("qb: %s expression cannot be nil", label)
+		}
+		if ref, ok := expr.(Ref); ok && ref.Name == "" {
+			return nil, fmt.Errorf("qb: %s field cannot be empty", label)
+		}
+		appended = append(appended, CloneScalar(expr))
+	}
+
+	return appended, nil
 }
 
 func appendFields(target []string, label string, fields ...string) ([]string, error) {

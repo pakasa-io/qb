@@ -63,7 +63,7 @@ func TestCompileWithTransformer(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 
-	wantSQL := `WHERE "status" = ? ORDER BY "created_at" DESC`
+	wantSQL := `WHERE "status" = $1 ORDER BY "created_at" DESC`
 	if statement.SQL != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
 	}
@@ -91,9 +91,9 @@ func TestCompileWithTransformerError(t *testing.T) {
 func TestCompileReturnsStructuredError(t *testing.T) {
 	query := qb.Query{
 		Filter: qb.Predicate{
-			Field: "status",
+			Left:  qb.F("status"),
 			Op:    qb.Operator("bogus"),
-			Value: "active",
+			Right: qb.ScalarOperand{Expr: qb.V("active")},
 		},
 	}
 
@@ -130,7 +130,7 @@ func TestCompileSelectGroupByAndPageSize(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 
-	wantSQL := `SELECT "status", "role" WHERE "tenant_id" = ? GROUP BY "status", "role" ORDER BY "status" ASC LIMIT 10 OFFSET 10`
+	wantSQL := `SELECT "status", "role" WHERE "tenant_id" = $1 GROUP BY "status", "role" ORDER BY "status" ASC LIMIT 10 OFFSET 10`
 	if statement.SQL != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
 	}
@@ -170,7 +170,7 @@ func TestCompileCursorQueryWithTransformer(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 
-	wantSQL := `WHERE ("created_at" < ? OR ("created_at" = ? AND "id" < ?)) ORDER BY "created_at" DESC LIMIT 25`
+	wantSQL := `WHERE ("created_at" < $1 OR ("created_at" = $2 AND "id" < $3)) ORDER BY "created_at" DESC LIMIT 25`
 	if statement.SQL != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
 	}
@@ -184,5 +184,75 @@ func TestCompileCursorQueryWithTransformer(t *testing.T) {
 		if statement.Args[i] != wantArgs[i] {
 			t.Fatalf("arg %d mismatch: want %#v, got %#v", i, wantArgs[i], statement.Args[i])
 		}
+	}
+}
+
+func TestCompileFunctionExpressions(t *testing.T) {
+	query, err := qb.New().
+		SelectExpr(qb.Lower(qb.F("users.name")), qb.F("users.age")).
+		GroupByExpr(qb.Lower(qb.F("users.name"))).
+		SortByExpr(qb.Lower(qb.F("users.name")), qb.Asc).
+		Where(qb.And(
+			qb.Lower(qb.F("users.name")).Eq("john"),
+			qb.F("users.name").Eq(qb.Lower("JOHN")),
+		)).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	statement, err := sqladapter.New().Compile(query)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	wantSQL := `SELECT LOWER("users"."name"), "users"."age" WHERE (LOWER("users"."name") = $1 AND "users"."name" = LOWER($2)) GROUP BY LOWER("users"."name") ORDER BY LOWER("users"."name") ASC`
+	if statement.SQL != wantSQL {
+		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
+	}
+
+	wantArgs := []any{"john", "JOHN"}
+	if len(statement.Args) != len(wantArgs) {
+		t.Fatalf("arg count mismatch: want %d, got %d", len(wantArgs), len(statement.Args))
+	}
+
+	for i := range wantArgs {
+		if statement.Args[i] != wantArgs[i] {
+			t.Fatalf("arg %d mismatch: want %#v, got %#v", i, wantArgs[i], statement.Args[i])
+		}
+	}
+}
+
+func TestDefaultDialectCanBeChangedGloballyAndOverridden(t *testing.T) {
+	original := sqladapter.DefaultDialect()
+	defer sqladapter.SetDefaultDialect(original)
+
+	query, err := qb.New().
+		Where(qb.Lower(qb.F("users.name")).Eq("john")).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	sqladapter.SetDefaultDialect(sqladapter.MySQLDialect{})
+
+	statement, err := sqladapter.New().Compile(query)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	wantGlobal := "WHERE LOWER(`users`.`name`) = ?"
+	if statement.SQL != wantGlobal {
+		t.Fatalf("global dialect SQL mismatch\nwant: %s\ngot:  %s", wantGlobal, statement.SQL)
+	}
+
+	override, err := sqladapter.New(sqladapter.WithDialect(sqladapter.SQLiteDialect{})).Compile(query)
+	if err != nil {
+		t.Fatalf("Compile() with override error = %v", err)
+	}
+
+	wantOverride := `WHERE LOWER("users"."name") = ?`
+	if override.SQL != wantOverride {
+		t.Fatalf("override dialect SQL mismatch\nwant: %s\ngot:  %s", wantOverride, override.SQL)
 	}
 }

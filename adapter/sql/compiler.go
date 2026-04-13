@@ -2,17 +2,10 @@ package sqladapter
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 
 	"github.com/pakasa-io/qb"
 )
-
-// Dialect controls identifier quoting and placeholder formatting.
-type Dialect interface {
-	QuoteIdentifier(string) string
-	Placeholder(int) string
-}
 
 // Statement is a parameterized SQL fragment.
 type Statement struct {
@@ -29,9 +22,10 @@ type Compiler struct {
 // Option customizes the compiler.
 type Option func(*Compiler)
 
-// New creates a SQL compiler with the ANSI question-mark dialect.
+// New creates a SQL compiler using the current package default dialect unless
+// a specific dialect override is provided.
 func New(opts ...Option) Compiler {
-	compiler := Compiler{dialect: QuestionDialect{}}
+	compiler := Compiler{dialect: DefaultDialect()}
 	for _, opt := range opts {
 		opt(&compiler)
 	}
@@ -96,16 +90,18 @@ func (c Compiler) Compile(query qb.Query) (Statement, error) {
 		return Statement{}, err
 	}
 
-	clauses := make([]string, 0, 4)
+	clauses := make([]string, 0, 5)
 	args := make([]any, 0)
 	argIndex := 1
 
 	if len(transformed.Selects) > 0 {
-		selects, err := c.compileFields(transformed.Selects, "select")
+		selects, selectArgs, nextArg, err := c.compileScalarList(transformed.Selects, "select", argIndex)
 		if err != nil {
 			return Statement{}, err
 		}
 		clauses = append(clauses, "SELECT "+selects)
+		args = append(args, selectArgs...)
+		argIndex = nextArg
 	}
 
 	if transformed.Filter != nil {
@@ -119,19 +115,23 @@ func (c Compiler) Compile(query qb.Query) (Statement, error) {
 	}
 
 	if len(transformed.GroupBy) > 0 {
-		groupBy, err := c.compileFields(transformed.GroupBy, "group_by")
+		groupBy, groupArgs, nextArg, err := c.compileScalarList(transformed.GroupBy, "group_by", argIndex)
 		if err != nil {
 			return Statement{}, err
 		}
 		clauses = append(clauses, "GROUP BY "+groupBy)
+		args = append(args, groupArgs...)
+		argIndex = nextArg
 	}
 
 	if len(transformed.Sorts) > 0 {
-		sorts, err := c.compileSorts(transformed.Sorts)
+		sorts, sortArgs, nextArg, err := c.compileSorts(transformed.Sorts, argIndex)
 		if err != nil {
 			return Statement{}, err
 		}
 		clauses = append(clauses, "ORDER BY "+sorts)
+		args = append(args, sortArgs...)
+		argIndex = nextArg
 	}
 
 	limit, offset, err := transformed.ResolvedPagination()
@@ -151,29 +151,6 @@ func (c Compiler) Compile(query qb.Query) (Statement, error) {
 		SQL:  strings.Join(clauses, " "),
 		Args: args,
 	}, nil
-}
-
-// QuestionDialect renders placeholders as '?' and quotes identifiers with
-// double quotes.
-type QuestionDialect struct{}
-
-func (QuestionDialect) QuoteIdentifier(identifier string) string {
-	return quoteDottedIdentifier(identifier)
-}
-
-func (QuestionDialect) Placeholder(int) string {
-	return "?"
-}
-
-// DollarDialect renders PostgreSQL-style numbered placeholders.
-type DollarDialect struct{}
-
-func (DollarDialect) QuoteIdentifier(identifier string) string {
-	return quoteDottedIdentifier(identifier)
-}
-
-func (DollarDialect) Placeholder(n int) string {
-	return fmt.Sprintf("$%d", n)
 }
 
 func (c Compiler) compileExpr(expr qb.Expr, argIndex int) (string, []any, int, error) {
@@ -203,7 +180,6 @@ func (c Compiler) compileExpr(expr qb.Expr, argIndex int) (string, []any, int, e
 			if err != nil {
 				return "", nil, argIndex, err
 			}
-
 			parts = append(parts, part)
 			args = append(args, partArgs...)
 			nextArg = updatedArg
@@ -226,68 +202,67 @@ func (c Compiler) compileExpr(expr qb.Expr, argIndex int) (string, []any, int, e
 }
 
 func (c Compiler) compilePredicate(predicate qb.Predicate, argIndex int) (string, []any, int, error) {
-	if predicate.Field == "" {
-		return "", nil, argIndex, qb.NewError(
-			fmt.Errorf("predicate field cannot be empty"),
-			qb.WithStage(qb.StageCompile),
-			qb.WithCode(qb.CodeInvalidQuery),
-			qb.WithOperator(predicate.Op),
-		)
+	leftSQL, leftArgs, nextArg, err := c.compileScalar(predicate.Left, argIndex)
+	if err != nil {
+		return "", nil, argIndex, err
 	}
 
-	field := c.dialect.QuoteIdentifier(predicate.Field)
+	field := predicateField(predicate.Left)
 
 	switch predicate.Op {
 	case qb.OpEq:
-		if predicate.Value == nil {
-			return field + " IS NULL", nil, argIndex, nil
+		if operandIsNull(predicate.Right) {
+			return leftSQL + " IS NULL", leftArgs, nextArg, nil
 		}
-		return field + " = " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
+		return c.compileBinary(leftSQL, leftArgs, predicate.Right, "=", nextArg, field, predicate.Op)
 	case qb.OpNe:
-		if predicate.Value == nil {
-			return field + " IS NOT NULL", nil, argIndex, nil
+		if operandIsNull(predicate.Right) {
+			return leftSQL + " IS NOT NULL", leftArgs, nextArg, nil
 		}
-		return field + " <> " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
+		return c.compileBinary(leftSQL, leftArgs, predicate.Right, "<>", nextArg, field, predicate.Op)
 	case qb.OpGt:
-		return field + " > " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
+		return c.compileBinary(leftSQL, leftArgs, predicate.Right, ">", nextArg, field, predicate.Op)
 	case qb.OpGte:
-		return field + " >= " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
+		return c.compileBinary(leftSQL, leftArgs, predicate.Right, ">=", nextArg, field, predicate.Op)
 	case qb.OpLt:
-		return field + " < " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
+		return c.compileBinary(leftSQL, leftArgs, predicate.Right, "<", nextArg, field, predicate.Op)
 	case qb.OpLte:
-		return field + " <= " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
+		return c.compileBinary(leftSQL, leftArgs, predicate.Right, "<=", nextArg, field, predicate.Op)
 	case qb.OpLike:
-		return field + " LIKE " + c.dialect.Placeholder(argIndex), []any{predicate.Value}, argIndex + 1, nil
+		return c.compileLike(leftSQL, leftArgs, predicate.Right, "", "", nextArg, field, predicate.Op)
 	case qb.OpContains:
-		return field + " LIKE " + c.dialect.Placeholder(argIndex), []any{"%" + fmt.Sprint(predicate.Value) + "%"}, argIndex + 1, nil
+		return c.compileLike(leftSQL, leftArgs, predicate.Right, "%", "%", nextArg, field, predicate.Op)
 	case qb.OpPrefix:
-		return field + " LIKE " + c.dialect.Placeholder(argIndex), []any{fmt.Sprint(predicate.Value) + "%"}, argIndex + 1, nil
+		return c.compileLike(leftSQL, leftArgs, predicate.Right, "", "%", nextArg, field, predicate.Op)
 	case qb.OpSuffix:
-		return field + " LIKE " + c.dialect.Placeholder(argIndex), []any{"%" + fmt.Sprint(predicate.Value)}, argIndex + 1, nil
+		return c.compileLike(leftSQL, leftArgs, predicate.Right, "%", "", nextArg, field, predicate.Op)
 	case qb.OpIsNull:
-		return field + " IS NULL", nil, argIndex, nil
+		return leftSQL + " IS NULL", leftArgs, nextArg, nil
 	case qb.OpNotNull:
-		return field + " IS NOT NULL", nil, argIndex, nil
+		return leftSQL + " IS NOT NULL", leftArgs, nextArg, nil
 	case qb.OpIn, qb.OpNotIn:
-		values, ok := anyList(predicate.Value)
-		if !ok || len(values) == 0 {
+		list, ok := predicate.Right.(qb.ListOperand)
+		if !ok || len(list.Items) == 0 {
 			return "", nil, argIndex, qb.NewError(
 				fmt.Errorf("%s requires a non-empty list", predicate.Op),
 				qb.WithStage(qb.StageCompile),
 				qb.WithCode(qb.CodeInvalidValue),
-				qb.WithField(predicate.Field),
+				qb.WithField(field),
 				qb.WithOperator(predicate.Op),
 			)
 		}
 
-		placeholders := make([]string, len(values))
-		args := make([]any, len(values))
-		nextArg := argIndex
-
-		for i, value := range values {
-			placeholders[i] = c.dialect.Placeholder(nextArg)
-			args[i] = value
-			nextArg++
+		parts := make([]string, len(list.Items))
+		args := append([]any(nil), leftArgs...)
+		updatedArg := nextArg
+		for i, item := range list.Items {
+			part, partArgs, nextValueArg, err := c.compileScalar(item, updatedArg)
+			if err != nil {
+				return "", nil, argIndex, err
+			}
+			parts[i] = part
+			args = append(args, partArgs...)
+			updatedArg = nextValueArg
 		}
 
 		operator := " IN "
@@ -295,25 +270,109 @@ func (c Compiler) compilePredicate(predicate qb.Predicate, argIndex int) (string
 			operator = " NOT IN "
 		}
 
-		return field + operator + "(" + strings.Join(placeholders, ", ") + ")", args, nextArg, nil
+		return leftSQL + operator + "(" + strings.Join(parts, ", ") + ")", args, updatedArg, nil
 	default:
 		return "", nil, argIndex, qb.NewError(
 			fmt.Errorf("unsupported operator %q", predicate.Op),
 			qb.WithStage(qb.StageCompile),
 			qb.WithCode(qb.CodeUnsupportedOperator),
-			qb.WithField(predicate.Field),
+			qb.WithField(field),
 			qb.WithOperator(predicate.Op),
 		)
 	}
 }
 
-func (c Compiler) compileSorts(sorts []qb.Sort) (string, error) {
-	parts := make([]string, 0, len(sorts))
+func (c Compiler) compileBinary(leftSQL string, leftArgs []any, operand qb.Operand, operator string, argIndex int, field string, op qb.Operator) (string, []any, int, error) {
+	right, ok := operand.(qb.ScalarOperand)
+	if !ok {
+		return "", nil, argIndex, qb.NewError(
+			fmt.Errorf("%s requires a scalar operand", op),
+			qb.WithStage(qb.StageCompile),
+			qb.WithCode(qb.CodeInvalidValue),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
+	}
 
-	for _, sort := range sorts {
-		if sort.Field == "" {
-			return "", qb.NewError(
-				fmt.Errorf("sort field cannot be empty"),
+	rightSQL, rightArgs, nextArg, err := c.compileScalar(right.Expr, argIndex)
+	if err != nil {
+		return "", nil, argIndex, err
+	}
+
+	return leftSQL + " " + operator + " " + rightSQL, append(leftArgs, rightArgs...), nextArg, nil
+}
+
+func (c Compiler) compileLike(leftSQL string, leftArgs []any, operand qb.Operand, prefix, suffix string, argIndex int, field string, op qb.Operator) (string, []any, int, error) {
+	right, ok := operand.(qb.ScalarOperand)
+	if !ok {
+		return "", nil, argIndex, qb.NewError(
+			fmt.Errorf("%s requires a scalar operand", op),
+			qb.WithStage(qb.StageCompile),
+			qb.WithCode(qb.CodeInvalidValue),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
+	}
+
+	scalar := right.Expr
+	if prefix != "" || suffix != "" {
+		if literal, ok := scalar.(qb.Literal); ok {
+			scalar = qb.V(prefix + fmt.Sprint(literal.Value) + suffix)
+		} else {
+			parts := make([]any, 0, 3)
+			if prefix != "" {
+				parts = append(parts, qb.V(prefix))
+			}
+			parts = append(parts, scalar)
+			if suffix != "" {
+				parts = append(parts, qb.V(suffix))
+			}
+			scalar = qb.Func("concat", parts...)
+		}
+	}
+
+	rightSQL, rightArgs, nextArg, err := c.compileScalar(scalar, argIndex)
+	if err != nil {
+		return "", nil, argIndex, err
+	}
+
+	return leftSQL + " LIKE " + rightSQL, append(leftArgs, rightArgs...), nextArg, nil
+}
+
+func (c Compiler) compileScalarList(values []qb.Scalar, kind string, argIndex int) (string, []any, int, error) {
+	parts := make([]string, 0, len(values))
+	args := make([]any, 0)
+	nextArg := argIndex
+
+	for _, value := range values {
+		part, partArgs, updatedArg, err := c.compileScalar(value, nextArg)
+		if err != nil {
+			return "", nil, argIndex, err
+		}
+		if part == "" {
+			return "", nil, argIndex, qb.NewError(
+				fmt.Errorf("%s expression cannot be empty", kind),
+				qb.WithStage(qb.StageCompile),
+				qb.WithCode(qb.CodeInvalidQuery),
+			)
+		}
+		parts = append(parts, part)
+		args = append(args, partArgs...)
+		nextArg = updatedArg
+	}
+
+	return strings.Join(parts, ", "), args, nextArg, nil
+}
+
+func (c Compiler) compileSorts(values []qb.Sort, argIndex int) (string, []any, int, error) {
+	parts := make([]string, 0, len(values))
+	args := make([]any, 0)
+	nextArg := argIndex
+
+	for _, sort := range values {
+		if sort.Expr == nil {
+			return "", nil, argIndex, qb.NewError(
+				fmt.Errorf("sort expression cannot be nil"),
 				qb.WithStage(qb.StageCompile),
 				qb.WithCode(qb.CodeInvalidQuery),
 			)
@@ -323,76 +382,108 @@ func (c Compiler) compileSorts(sorts []qb.Sort) (string, error) {
 		if direction == "" {
 			direction = qb.Asc
 		}
-
 		if direction != qb.Asc && direction != qb.Desc {
-			return "", qb.NewError(
+			return "", nil, argIndex, qb.NewError(
 				fmt.Errorf("unsupported sort direction %q", sort.Direction),
 				qb.WithStage(qb.StageCompile),
 				qb.WithCode(qb.CodeInvalidQuery),
-				qb.WithField(sort.Field),
+				qb.WithField(predicateField(sort.Expr)),
 			)
 		}
 
-		parts = append(parts, c.dialect.QuoteIdentifier(sort.Field)+" "+strings.ToUpper(string(direction)))
+		part, partArgs, updatedArg, err := c.compileScalar(sort.Expr, nextArg)
+		if err != nil {
+			return "", nil, argIndex, err
+		}
+		parts = append(parts, part+" "+strings.ToUpper(string(direction)))
+		args = append(args, partArgs...)
+		nextArg = updatedArg
 	}
 
-	return strings.Join(parts, ", "), nil
+	return strings.Join(parts, ", "), args, nextArg, nil
 }
 
-func (c Compiler) compileFields(fields []string, kind string) (string, error) {
-	parts := make([]string, 0, len(fields))
-	for _, field := range fields {
-		field = strings.TrimSpace(field)
-		if field == "" {
-			return "", qb.NewError(
-				fmt.Errorf("%s field cannot be empty", kind),
+func (c Compiler) compileScalar(expr qb.Scalar, argIndex int) (string, []any, int, error) {
+	switch typed := expr.(type) {
+	case nil:
+		return "", nil, argIndex, qb.NewError(
+			fmt.Errorf("scalar expression cannot be nil"),
+			qb.WithStage(qb.StageCompile),
+			qb.WithCode(qb.CodeInvalidQuery),
+		)
+	case qb.Ref:
+		if strings.TrimSpace(typed.Name) == "" {
+			return "", nil, argIndex, qb.NewError(
+				fmt.Errorf("field reference cannot be empty"),
 				qb.WithStage(qb.StageCompile),
 				qb.WithCode(qb.CodeInvalidQuery),
 			)
 		}
-		parts = append(parts, c.dialect.QuoteIdentifier(field))
-	}
-	return strings.Join(parts, ", "), nil
-}
-
-func quoteDottedIdentifier(identifier string) string {
-	parts := strings.Split(identifier, ".")
-	for i, part := range parts {
-		part = strings.TrimSpace(part)
-		part = strings.ReplaceAll(part, `"`, `""`)
-		parts[i] = `"` + part + `"`
-	}
-	return strings.Join(parts, ".")
-}
-
-func anyList(value any) ([]any, bool) {
-	switch typed := value.(type) {
-	case []any:
-		return append([]any(nil), typed...), true
-	case []string:
-		out := make([]any, len(typed))
-		for i, item := range typed {
-			out[i] = item
+		return c.dialect.QuoteIdentifier(typed.Name), nil, argIndex, nil
+	case qb.Literal:
+		if typed.Value == nil {
+			return "NULL", nil, argIndex, nil
 		}
-		return out, true
+		return c.dialect.Placeholder(argIndex), []any{typed.Value}, argIndex + 1, nil
+	case qb.Call:
+		name := strings.TrimSpace(typed.Name)
+		if name == "" {
+			return "", nil, argIndex, qb.NewError(
+				fmt.Errorf("function name cannot be empty"),
+				qb.WithStage(qb.StageCompile),
+				qb.WithCode(qb.CodeInvalidQuery),
+			)
+		}
+
+		args := make([]string, len(typed.Args))
+		values := make([]any, 0)
+		nextArg := argIndex
+		for i, arg := range typed.Args {
+			part, partArgs, updatedArg, err := c.compileScalar(arg, nextArg)
+			if err != nil {
+				return "", nil, argIndex, err
+			}
+			args[i] = part
+			values = append(values, partArgs...)
+			nextArg = updatedArg
+		}
+
+		sql, err := c.dialect.CompileFunction(name, args)
+		if err != nil {
+			return "", nil, argIndex, qb.NewError(
+				err,
+				qb.WithStage(qb.StageCompile),
+				qb.WithCode(qb.CodeInvalidQuery),
+			)
+		}
+		return sql, values, nextArg, nil
 	default:
-		if typed == nil {
-			return nil, false
-		}
-
-		rv := reflect.ValueOf(typed)
-		if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
-			return nil, false
-		}
-
-		if rv.Type().Elem().Kind() == reflect.Uint8 {
-			return nil, false
-		}
-
-		out := make([]any, rv.Len())
-		for i := 0; i < rv.Len(); i++ {
-			out[i] = rv.Index(i).Interface()
-		}
-		return out, true
+		return "", nil, argIndex, qb.NewError(
+			fmt.Errorf("unsupported scalar expression %T", expr),
+			qb.WithStage(qb.StageCompile),
+			qb.WithCode(qb.CodeInvalidQuery),
+		)
 	}
+}
+
+func operandIsNull(operand qb.Operand) bool {
+	right, ok := operand.(qb.ScalarOperand)
+	if !ok {
+		return false
+	}
+
+	literal, ok := right.Expr.(qb.Literal)
+	return ok && literal.Value == nil
+}
+
+func predicateField(expr qb.Scalar) string {
+	if expr == nil {
+		return ""
+	}
+
+	field, ok := qb.SingleRef(expr)
+	if !ok {
+		return ""
+	}
+	return field
 }
