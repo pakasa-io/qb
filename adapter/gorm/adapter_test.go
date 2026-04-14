@@ -281,6 +281,47 @@ func TestApplyWithFunctionExpressions(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsUnsupportedDialectSpecificFunctions(t *testing.T) {
+	tests := []struct {
+		name  string
+		query qb.Query
+	}{
+		{
+			name: "ilike on sqlite",
+			query: mustBuildQuery(t, qb.New().
+				Where(qb.F("name").ILike("jo%"))),
+		},
+		{
+			name: "regexp on sqlite",
+			query: mustBuildQuery(t, qb.New().
+				Where(qb.F("name").Regexp("jo.*"))),
+		},
+		{
+			name: "ceil on sqlite",
+			query: mustBuildQuery(t, qb.New().
+				SelectExpr(qb.F("score").Ceil())),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := gormadapter.New().Apply(dryRunDB(t).Model(&user{}), tt.query)
+			if err == nil {
+				t.Fatal("expected apply error")
+			}
+
+			var diagnostic *qb.Error
+			if !errors.As(err, &diagnostic) {
+				t.Fatalf("expected qb.Error, got %T", err)
+			}
+
+			if diagnostic.Code != qb.CodeUnsupportedFeature {
+				t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+			}
+		})
+	}
+}
+
 func applyAndFind(t *testing.T, adapter gormadapter.Adapter, query qb.Query) (*gorm.DB, error) {
 	t.Helper()
 
@@ -309,4 +350,15 @@ func dryRunDB(t *testing.T) *gorm.DB {
 	}
 
 	return db
+}
+
+func mustBuildQuery(t *testing.T, builder qb.Builder) qb.Query {
+	t.Helper()
+
+	query, err := builder.Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	return query
 }

@@ -10,14 +10,21 @@ import (
 func main() {
 	query, err := qb.New().
 		SelectExpr(
-			qb.Lower(qb.F("users.name")),
+			qb.F("users.name").Lower(),
+			qb.F("users.name").Substring(1, 4),
+			qb.F("users.first_name").Concat(" ", qb.F("users.last_name")),
+			qb.F("users.nickname").Coalesce(qb.F("users.name")),
+			qb.F("users.created_at").DateTrunc("day"),
+			qb.F("users.profile").JsonValue("$.nickname"),
+			qb.Now(),
 			qb.F("users.age"),
 		).
-		GroupByExpr(qb.Lower(qb.F("users.name"))).
-		SortByExpr(qb.Lower(qb.F("users.name")), qb.Asc).
+		GroupByExpr(qb.F("users.name").Lower()).
+		SortByExpr(qb.F("users.name").Lower(), qb.Asc).
 		Where(qb.And(
-			qb.Lower(qb.F("users.name")).Eq("john"),
-			qb.F("users.name").Eq(qb.Lower("JOHN")),
+			qb.F("users.name").Lower().Eq("john"),
+			qb.F("users.name").Substring(1, 4).Eq("john"),
+			qb.F("users.name").Eq(qb.V("JOHN").Lower()),
 		)).
 		Query()
 	if err != nil {

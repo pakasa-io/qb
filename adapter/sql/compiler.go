@@ -63,6 +63,8 @@ func (c Compiler) Capabilities() qb.Capabilities {
 			qb.OpIn:       {},
 			qb.OpNotIn:    {},
 			qb.OpLike:     {},
+			qb.OpILike:    {},
+			qb.OpRegexp:   {},
 			qb.OpContains: {},
 			qb.OpPrefix:   {},
 			qb.OpSuffix:   {},
@@ -230,6 +232,10 @@ func (c Compiler) compilePredicate(predicate qb.Predicate, argIndex int) (string
 		return c.compileBinary(leftSQL, leftArgs, predicate.Right, "<=", nextArg, field, predicate.Op)
 	case qb.OpLike:
 		return c.compileLike(leftSQL, leftArgs, predicate.Right, "", "", nextArg, field, predicate.Op)
+	case qb.OpILike:
+		return c.compilePattern(leftSQL, leftArgs, predicate.Right, "ILIKE", nextArg, field, predicate.Op)
+	case qb.OpRegexp:
+		return c.compileRegexp(leftSQL, leftArgs, predicate.Right, nextArg, field, predicate.Op)
 	case qb.OpContains:
 		return c.compileLike(leftSQL, leftArgs, predicate.Right, "%", "%", nextArg, field, predicate.Op)
 	case qb.OpPrefix:
@@ -337,6 +343,69 @@ func (c Compiler) compileLike(leftSQL string, leftArgs []any, operand qb.Operand
 	}
 
 	return leftSQL + " LIKE " + rightSQL, append(leftArgs, rightArgs...), nextArg, nil
+}
+
+func (c Compiler) compilePattern(leftSQL string, leftArgs []any, operand qb.Operand, operator string, argIndex int, field string, op qb.Operator) (string, []any, int, error) {
+	right, ok := operand.(qb.ScalarOperand)
+	if !ok {
+		return "", nil, argIndex, qb.NewError(
+			fmt.Errorf("%s requires a scalar operand", op),
+			qb.WithStage(qb.StageCompile),
+			qb.WithCode(qb.CodeInvalidValue),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
+	}
+
+	if op == qb.OpILike && c.dialect.Name() != "postgres" {
+		return "", nil, argIndex, qb.NewError(
+			fmt.Errorf("operator %q is not supported by the %s dialect", op, c.dialect.Name()),
+			qb.WithStage(qb.StageCompile),
+			qb.WithCode(qb.CodeUnsupportedFeature),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
+	}
+
+	rightSQL, rightArgs, nextArg, err := c.compileScalar(right.Expr, argIndex)
+	if err != nil {
+		return "", nil, argIndex, err
+	}
+
+	return leftSQL + " " + operator + " " + rightSQL, append(leftArgs, rightArgs...), nextArg, nil
+}
+
+func (c Compiler) compileRegexp(leftSQL string, leftArgs []any, operand qb.Operand, argIndex int, field string, op qb.Operator) (string, []any, int, error) {
+	right, ok := operand.(qb.ScalarOperand)
+	if !ok {
+		return "", nil, argIndex, qb.NewError(
+			fmt.Errorf("%s requires a scalar operand", op),
+			qb.WithStage(qb.StageCompile),
+			qb.WithCode(qb.CodeInvalidValue),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
+	}
+
+	rightSQL, rightArgs, nextArg, err := c.compileScalar(right.Expr, argIndex)
+	if err != nil {
+		return "", nil, argIndex, err
+	}
+
+	switch c.dialect.Name() {
+	case "postgres":
+		return leftSQL + " ~ " + rightSQL, append(leftArgs, rightArgs...), nextArg, nil
+	case "mysql":
+		return "REGEXP_LIKE(" + leftSQL + ", " + rightSQL + ")", append(leftArgs, rightArgs...), nextArg, nil
+	default:
+		return "", nil, argIndex, qb.NewError(
+			fmt.Errorf("operator %q is not supported by the %s dialect", op, c.dialect.Name()),
+			qb.WithStage(qb.StageCompile),
+			qb.WithCode(qb.CodeUnsupportedFeature),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
+	}
 }
 
 func (c Compiler) compileScalarList(values []qb.Scalar, kind string, argIndex int) (string, []any, int, error) {
@@ -450,10 +519,10 @@ func (c Compiler) compileScalar(expr qb.Scalar, argIndex int) (string, []any, in
 
 		sql, err := c.dialect.CompileFunction(name, args)
 		if err != nil {
-			return "", nil, argIndex, qb.NewError(
+			return "", nil, argIndex, qb.WrapError(
 				err,
-				qb.WithStage(qb.StageCompile),
-				qb.WithCode(qb.CodeInvalidQuery),
+				qb.WithDefaultStage(qb.StageCompile),
+				qb.WithDefaultCode(qb.CodeInvalidQuery),
 			)
 		}
 		return sql, values, nextArg, nil

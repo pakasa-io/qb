@@ -74,6 +74,36 @@ query, err := qb.New().
     Query()
 ```
 
+Common helpers are available for portable SQL functions:
+
+```go
+query, err := qb.New().
+    SelectExpr(
+        qb.F("users.name").Substring(1, 4),
+        qb.F("users.first_name").Concat(" ", qb.F("users.last_name")),
+        qb.F("users.nickname").Coalesce(qb.F("users.name")),
+        qb.F("users.balance").Abs(),
+    ).
+    Where(qb.F("users.email").Replace("@old.com", "@new.com").Eq("john@new.com")).
+    Query()
+```
+
+PostgreSQL-first helpers are also available for date/time and richer JSON usage:
+
+```go
+query, err := qb.New().
+    SelectExpr(
+        qb.F("users.created_at").DateTrunc("day"),
+        qb.F("users.created_at").Extract("year"),
+        qb.F("users.profile").JsonQuery("$.address"),
+        qb.F("users.profile").JsonExists("$.address"),
+        qb.F("users.profile").JsonArrayLength("$.tags"),
+        qb.JsonObject("id", qb.F("users.id"), "name", qb.F("users.name")),
+        qb.Now(),
+    ).
+    Query()
+```
+
 ## Schema-driven usage
 
 ```go

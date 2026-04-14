@@ -60,6 +60,8 @@ func (a Adapter) Capabilities() qb.Capabilities {
 	for op := range a.predicateCompiler {
 		operators[op] = struct{}{}
 	}
+	operators[qb.OpILike] = struct{}{}
+	operators[qb.OpRegexp] = struct{}{}
 
 	return qb.Capabilities{
 		Operators:       operators,
@@ -295,7 +297,7 @@ func (a Adapter) compileExpr(expr qb.Expr, dialect sqladapter.Dialect) (clause.E
 
 func (a Adapter) compilePredicate(predicate qb.Predicate, dialect sqladapter.Dialect) (clause.Expression, error) {
 	field, ok := plainField(predicate.Left)
-	if ok && operandIsPlain(predicate.Right) {
+	if ok && operandIsPlain(predicate.Right) && predicate.Op != qb.OpILike && predicate.Op != qb.OpRegexp {
 		compiler, exists := a.predicateCompiler[predicate.Op]
 		if !exists {
 			return nil, qb.NewError(
@@ -440,6 +442,10 @@ func compilePredicateRaw(predicate qb.Predicate, dialect sqladapter.Dialect) (st
 		return compileBinaryRaw(leftSQL, leftArgs, predicate.Right, "<=", dialect, field, predicate.Op)
 	case qb.OpLike:
 		return compileLikeRaw(leftSQL, leftArgs, predicate.Right, "", "", dialect, field, predicate.Op)
+	case qb.OpILike:
+		return compilePatternRaw(leftSQL, leftArgs, predicate.Right, "ILIKE", dialect, field, predicate.Op)
+	case qb.OpRegexp:
+		return compileRegexpRaw(leftSQL, leftArgs, predicate.Right, dialect, field, predicate.Op)
 	case qb.OpContains:
 		return compileLikeRaw(leftSQL, leftArgs, predicate.Right, "%", "%", dialect, field, predicate.Op)
 	case qb.OpPrefix:
@@ -547,6 +553,69 @@ func compileLikeRaw(leftSQL string, leftArgs []any, operand qb.Operand, prefix, 
 	return leftSQL + " LIKE " + rightSQL, append(leftArgs, rightArgs...), nil
 }
 
+func compilePatternRaw(leftSQL string, leftArgs []any, operand qb.Operand, operator string, dialect sqladapter.Dialect, field string, op qb.Operator) (string, []any, error) {
+	right, ok := operand.(qb.ScalarOperand)
+	if !ok {
+		return "", nil, qb.NewError(
+			fmt.Errorf("%s requires a scalar operand", op),
+			qb.WithStage(qb.StageApply),
+			qb.WithCode(qb.CodeInvalidValue),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
+	}
+
+	if op == qb.OpILike && dialect.Name() != "postgres" {
+		return "", nil, qb.NewError(
+			fmt.Errorf("operator %q is not supported by the %s dialect", op, dialect.Name()),
+			qb.WithStage(qb.StageApply),
+			qb.WithCode(qb.CodeUnsupportedFeature),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
+	}
+
+	rightSQL, rightArgs, err := compileScalar(right.Expr, dialect, qb.StageApply)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return leftSQL + " " + operator + " " + rightSQL, append(leftArgs, rightArgs...), nil
+}
+
+func compileRegexpRaw(leftSQL string, leftArgs []any, operand qb.Operand, dialect sqladapter.Dialect, field string, op qb.Operator) (string, []any, error) {
+	right, ok := operand.(qb.ScalarOperand)
+	if !ok {
+		return "", nil, qb.NewError(
+			fmt.Errorf("%s requires a scalar operand", op),
+			qb.WithStage(qb.StageApply),
+			qb.WithCode(qb.CodeInvalidValue),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
+	}
+
+	rightSQL, rightArgs, err := compileScalar(right.Expr, dialect, qb.StageApply)
+	if err != nil {
+		return "", nil, err
+	}
+
+	switch dialect.Name() {
+	case "postgres":
+		return leftSQL + " ~ " + rightSQL, append(leftArgs, rightArgs...), nil
+	case "mysql":
+		return "REGEXP_LIKE(" + leftSQL + ", " + rightSQL + ")", append(leftArgs, rightArgs...), nil
+	default:
+		return "", nil, qb.NewError(
+			fmt.Errorf("operator %q is not supported by the %s dialect", op, dialect.Name()),
+			qb.WithStage(qb.StageApply),
+			qb.WithCode(qb.CodeUnsupportedFeature),
+			qb.WithField(field),
+			qb.WithOperator(op),
+		)
+	}
+}
+
 func compileScalarList(values []qb.Scalar, dialect sqladapter.Dialect, stage qb.ErrorStage, kind string) (string, []any, error) {
 	parts := make([]string, 0, len(values))
 	args := make([]any, 0)
@@ -597,10 +666,10 @@ func compileScalar(expr qb.Scalar, dialect sqladapter.Dialect, stage qb.ErrorSta
 
 		sql, err := dialect.CompileFunction(typed.Name, args)
 		if err != nil {
-			return "", nil, qb.NewError(
+			return "", nil, qb.WrapError(
 				err,
-				qb.WithStage(stage),
-				qb.WithCode(qb.CodeInvalidQuery),
+				qb.WithDefaultStage(stage),
+				qb.WithDefaultCode(qb.CodeInvalidQuery),
 			)
 		}
 

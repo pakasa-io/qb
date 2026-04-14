@@ -13,6 +13,8 @@ const (
 	OpIn       Operator = "in"
 	OpNotIn    Operator = "not_in"
 	OpLike     Operator = "like"
+	OpILike    Operator = "ilike"
+	OpRegexp   Operator = "regexp"
 	OpContains Operator = "contains"
 	OpPrefix   Operator = "prefix"
 	OpSuffix   Operator = "suffix"

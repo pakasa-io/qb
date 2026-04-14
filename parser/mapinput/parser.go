@@ -395,6 +395,26 @@ func parseOperator(field, operator string, node any, opts options, path string) 
 			return nil, err
 		}
 		return qb.Field(resolvedField).Like(value), nil
+	case "$ilike":
+		resolvedField, err := resolveFilterField(field, qb.OpILike, opts, path)
+		if err != nil {
+			return nil, err
+		}
+		value, err := decodeValue(resolvedField, qb.OpILike, node, opts, path)
+		if err != nil {
+			return nil, err
+		}
+		return qb.Field(resolvedField).ILike(value), nil
+	case "$regexp":
+		resolvedField, err := resolveFilterField(field, qb.OpRegexp, opts, path)
+		if err != nil {
+			return nil, err
+		}
+		value, err := decodeValue(resolvedField, qb.OpRegexp, node, opts, path)
+		if err != nil {
+			return nil, err
+		}
+		return qb.Field(resolvedField).Regexp(value), nil
 	case "$contains":
 		resolvedField, err := resolveFilterField(field, qb.OpContains, opts, path)
 		if err != nil {
