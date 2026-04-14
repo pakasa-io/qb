@@ -80,7 +80,7 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 		if err != nil {
 			return qb.Query{}, err
 		}
-		query.Selects = namesToRefs(selects)
+		query.Projections = namesToProjections(selects)
 	}
 
 	if rawInclude, ok := pickValue(input, "include"); ok {
@@ -537,6 +537,19 @@ func namesToRefs(values []string) []qb.Scalar {
 	out := make([]qb.Scalar, len(values))
 	for i, value := range values {
 		out[i] = qb.F(value)
+	}
+
+	return out
+}
+
+func namesToProjections(values []string) []qb.Projection {
+	if len(values) == 0 {
+		return nil
+	}
+
+	out := make([]qb.Projection, len(values))
+	for i, value := range values {
+		out[i] = qb.Project(qb.F(value))
 	}
 
 	return out

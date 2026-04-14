@@ -10,7 +10,6 @@ import (
 	"github.com/pakasa-io/qb/schema"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type user struct {
@@ -54,7 +53,7 @@ func TestApply(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	wantSQL := "SELECT * FROM `users` WHERE `status` = ? AND `role` IN (?,?) AND `deleted_at` IS NOT NULL ORDER BY `created_at` DESC LIMIT 10 OFFSET 20"
+	wantSQL := `SELECT * FROM ` + "`users`" + ` WHERE ("status" = ? AND "role" IN (?, ?) AND NOT ("deleted_at" IS NULL)) ORDER BY "created_at" DESC LIMIT 10 OFFSET 20`
 	if result.Statement.SQL.String() != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, result.Statement.SQL.String())
 	}
@@ -94,45 +93,7 @@ func TestApplyWithTransformer(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	wantSQL := "SELECT * FROM `users` WHERE `users`.`status` = ? ORDER BY `users`.`created_at` DESC"
-	if result.Statement.SQL.String() != wantSQL {
-		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, result.Statement.SQL.String())
-	}
-}
-
-func TestApplyWithCustomPredicateCompiler(t *testing.T) {
-	query, err := qb.New().
-		Where(qb.Field("status").Contains("Act")).
-		Query()
-	if err != nil {
-		t.Fatalf("Query() error = %v", err)
-	}
-
-	result, err := applyAndFind(
-		t,
-		gormadapter.New(
-			gormadapter.WithPredicateCompiler(qb.OpContains, func(field string, predicate qb.Predicate) (clause.Expression, error) {
-				operand, ok := predicate.Right.(qb.ScalarOperand)
-				if !ok {
-					return nil, errors.New("expected scalar operand")
-				}
-				literal, ok := operand.Expr.(qb.Literal)
-				if !ok {
-					return nil, errors.New("expected literal operand")
-				}
-				return clause.Expr{
-					SQL:  "LOWER(" + field + ") LIKE LOWER(?)",
-					Vars: []interface{}{"%" + literal.Value.(string) + "%"},
-				}, nil
-			}),
-		),
-		query,
-	)
-	if err != nil {
-		t.Fatalf("Apply() error = %v", err)
-	}
-
-	wantSQL := "SELECT * FROM `users` WHERE LOWER(status) LIKE LOWER(?)"
+	wantSQL := `SELECT * FROM ` + "`users`" + ` WHERE "users"."status" = ? ORDER BY "users"."created_at" DESC`
 	if result.Statement.SQL.String() != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, result.Statement.SQL.String())
 	}
@@ -204,10 +165,6 @@ func TestApplyWithSelectIncludeGroupByAndPageSize(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	if len(tx.Statement.Selects) != 2 || tx.Statement.Selects[0] != "status" || tx.Statement.Selects[1] != "role" {
-		t.Fatalf("unexpected selects: %#v", tx.Statement.Selects)
-	}
-
 	if len(tx.Statement.Preloads) != 2 {
 		t.Fatalf("unexpected preloads: %#v", tx.Statement.Preloads)
 	}
@@ -220,26 +177,12 @@ func TestApplyWithSelectIncludeGroupByAndPageSize(t *testing.T) {
 		t.Fatalf("expected Orders preload, got %#v", tx.Statement.Preloads)
 	}
 
-	groupClause, ok := tx.Statement.Clauses["GROUP BY"]
-	if !ok {
-		t.Fatal("expected GROUP BY clause")
-	}
-
-	groupBy, ok := groupClause.Expression.(clause.GroupBy)
-	if !ok {
-		t.Fatalf("unexpected GROUP BY expression: %T", groupClause.Expression)
-	}
-
-	if len(groupBy.Columns) != 2 || groupBy.Columns[0].Name != "status" || groupBy.Columns[1].Name != "role" {
-		t.Fatalf("unexpected GROUP BY columns: %#v", groupBy.Columns)
-	}
-
 	result := tx.Find(&[]user{})
 	if result.Error != nil {
 		t.Fatalf("Find() error = %v", result.Error)
 	}
 
-	wantSQL := "SELECT `status`,`role` FROM `users` GROUP BY `status`,`role` ORDER BY `status` LIMIT 10 OFFSET 10"
+	wantSQL := `SELECT "status", "role" FROM ` + "`users`" + ` GROUP BY "status", "role" ORDER BY "status" ASC LIMIT 10 OFFSET 10`
 	if result.Statement.SQL.String() != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, result.Statement.SQL.String())
 	}
@@ -264,7 +207,7 @@ func TestApplyWithFunctionExpressions(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 
-	wantSQL := "SELECT LOWER(\"name\"), \"age\" FROM `users` WHERE LOWER(\"name\") = ? AND \"name\" = LOWER(?) GROUP BY LOWER(\"name\") ORDER BY LOWER(\"name\") ASC"
+	wantSQL := `SELECT LOWER("name"), "age" FROM ` + "`users`" + ` WHERE (LOWER("name") = ? AND "name" = LOWER(?)) GROUP BY LOWER("name") ORDER BY LOWER("name") ASC`
 	if result.Statement.SQL.String() != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, result.Statement.SQL.String())
 	}
@@ -315,7 +258,14 @@ func TestApplyRejectsUnsupportedDialectSpecificFunctions(t *testing.T) {
 				t.Fatalf("expected qb.Error, got %T", err)
 			}
 
-			if diagnostic.Code != qb.CodeUnsupportedFeature {
+			if tt.name == "ceil on sqlite" {
+				if diagnostic.Code != qb.CodeUnsupportedFunction {
+					t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+				}
+				return
+			}
+
+			if diagnostic.Code != qb.CodeUnsupportedOperator {
 				t.Fatalf("unexpected diagnostic: %+v", diagnostic)
 			}
 		})

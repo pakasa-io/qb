@@ -496,8 +496,15 @@ func TestCompileUnsupportedFunctionsAndOperators(t *testing.T) {
 				t.Fatalf("expected qb.Error, got %T", err)
 			}
 
-			if diagnostic.Code != qb.CodeUnsupportedFeature {
-				t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+			switch tt.name {
+			case "ilike mysql", "regexp sqlite":
+				if diagnostic.Code != qb.CodeUnsupportedOperator {
+					t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+				}
+			default:
+				if diagnostic.Code != qb.CodeUnsupportedFunction {
+					t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+				}
 			}
 		})
 	}

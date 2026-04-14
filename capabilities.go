@@ -1,10 +1,14 @@
 package qb
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Capabilities describes which query features an adapter can compile or apply.
 type Capabilities struct {
 	Operators       map[Operator]struct{}
+	Functions       map[string]struct{}
 	SupportsSelect  bool
 	SupportsInclude bool
 	SupportsGroupBy bool
@@ -22,9 +26,15 @@ func (c Capabilities) SupportsOperator(op Operator) bool {
 	return ok
 }
 
+// SupportsFunction reports whether the function is supported.
+func (c Capabilities) SupportsFunction(name string) bool {
+	_, ok := c.Functions[strings.ToLower(name)]
+	return ok
+}
+
 // Validate checks whether the query fits within the declared capabilities.
 func (c Capabilities) Validate(stage ErrorStage, query Query) error {
-	if !c.SupportsSelect && len(query.Selects) > 0 {
+	if !c.SupportsSelect && len(query.Projections) > 0 {
 		return NewError(
 			fmt.Errorf("select is not supported"),
 			WithStage(stage),
@@ -114,6 +124,26 @@ func (c Capabilities) Validate(stage ErrorStage, query Query) error {
 			WithStage(stage),
 			WithCode(CodeUnsupportedFeature),
 		)
+	}
+
+	if err := WalkQueryScalars(query, func(expr Scalar) error {
+		call, ok := expr.(Call)
+		if !ok {
+			return nil
+		}
+
+		if c.SupportsFunction(call.Name) {
+			return nil
+		}
+
+		return NewError(
+			fmt.Errorf("function %q is not supported", call.Name),
+			WithStage(stage),
+			WithCode(CodeUnsupportedFunction),
+			WithFunction(strings.ToLower(call.Name)),
+		)
+	}); err != nil {
+		return err
 	}
 
 	return Walk(query.Filter, func(expr Expr) error {

@@ -34,8 +34,8 @@ func TestBuilderProducesIndependentQuery(t *testing.T) {
 		t.Fatalf("expected 1 sort, got %d", len(query.Sorts))
 	}
 
-	if len(query.Selects) != 2 || refName(query.Selects[0]) != "id" || refName(query.Selects[1]) != "status" {
-		t.Fatalf("unexpected selects: %#v", query.Selects)
+	if len(query.Projections) != 2 || projectionRefName(query.Projections[0]) != "id" || projectionRefName(query.Projections[1]) != "status" {
+		t.Fatalf("unexpected selects: %#v", query.Projections)
 	}
 
 	if len(query.Includes) != 2 || query.Includes[0] != "Customer" || query.Includes[1] != "Orders.Items" {
@@ -73,7 +73,7 @@ func TestBuilderProducesIndependentQuery(t *testing.T) {
 
 	clone := query.Clone()
 	clone.Sorts[0].Expr = qb.F("mutated")
-	clone.Selects[0] = qb.F("mutated")
+	clone.Projections[0] = qb.Project(qb.F("mutated"))
 	clone.Includes[0] = "mutated"
 	clone.GroupBy[0] = qb.F("mutated")
 
@@ -81,7 +81,7 @@ func TestBuilderProducesIndependentQuery(t *testing.T) {
 		t.Fatal("expected Clone to protect sort slice")
 	}
 
-	if refName(query.Selects[0]) != "id" || query.Includes[0] != "Customer" || refName(query.GroupBy[0]) != "status" {
+	if projectionRefName(query.Projections[0]) != "id" || query.Includes[0] != "Customer" || refName(query.GroupBy[0]) != "status" {
 		t.Fatal("expected Clone to protect metadata slices")
 	}
 
@@ -184,12 +184,12 @@ func TestBuilderSupportsFunctionExpressions(t *testing.T) {
 		t.Fatalf("Query() error = %v", err)
 	}
 
-	if len(query.Selects) != 2 {
-		t.Fatalf("expected 2 select expressions, got %d", len(query.Selects))
+	if len(query.Projections) != 2 {
+		t.Fatalf("expected 2 select expressions, got %d", len(query.Projections))
 	}
 
-	if _, ok := query.Selects[0].(qb.Call); !ok {
-		t.Fatalf("expected first select to be a function call, got %T", query.Selects[0])
+	if _, ok := query.Projections[0].Expr.(qb.Call); !ok {
+		t.Fatalf("expected first select to be a function call, got %T", query.Projections[0].Expr)
 	}
 
 	if len(query.GroupBy) != 1 {
@@ -221,4 +221,8 @@ func refName(expr qb.Scalar) string {
 		return ""
 	}
 	return ref.Name
+}
+
+func projectionRefName(projection qb.Projection) string {
+	return refName(projection.Expr)
 }

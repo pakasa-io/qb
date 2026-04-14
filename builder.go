@@ -30,22 +30,31 @@ func (b Builder) Where(expr Expr) Builder {
 
 // Select appends projected fields.
 func (b Builder) Select(fields ...string) Builder {
-	scalars := make([]Scalar, len(fields))
+	projections := make([]Projection, len(fields))
 	for i, field := range fields {
-		scalars[i] = F(field)
+		projections[i] = Project(F(field))
 	}
-	return b.SelectExpr(scalars...)
+	return b.SelectProjection(projections...)
 }
 
 // SelectExpr appends projected scalar expressions.
 func (b Builder) SelectExpr(exprs ...Scalar) Builder {
-	appended, err := appendScalars(b.query.Selects, "select", exprs...)
+	projections := make([]Projection, len(exprs))
+	for i, expr := range exprs {
+		projections[i] = Project(expr)
+	}
+	return b.SelectProjection(projections...)
+}
+
+// SelectProjection appends projections.
+func (b Builder) SelectProjection(projections ...Projection) Builder {
+	appended, err := appendProjections(b.query.Projections, "select", projections...)
 	if err != nil {
 		b.err = err
 		return b
 	}
 
-	b.query.Selects = appended
+	b.query.Projections = appended
 	return b
 }
 
@@ -57,6 +66,11 @@ func (b Builder) Pick(fields ...string) Builder {
 // PickExpr is an alias for SelectExpr.
 func (b Builder) PickExpr(exprs ...Scalar) Builder {
 	return b.SelectExpr(exprs...)
+}
+
+// PickProjection is an alias for SelectProjection.
+func (b Builder) PickProjection(projections ...Projection) Builder {
+	return b.SelectProjection(projections...)
 }
 
 // Include appends eager-load/include hints.
@@ -249,6 +263,25 @@ func appendScalars(target []Scalar, label string, exprs ...Scalar) ([]Scalar, er
 			return nil, fmt.Errorf("qb: %s field cannot be empty", label)
 		}
 		appended = append(appended, CloneScalar(expr))
+	}
+
+	return appended, nil
+}
+
+func appendProjections(target []Projection, label string, projections ...Projection) ([]Projection, error) {
+	appended := cloneProjections(target)
+	for _, projection := range projections {
+		if projection.Expr == nil {
+			return nil, fmt.Errorf("qb: %s expression cannot be nil", label)
+		}
+		if ref, ok := projection.Expr.(Ref); ok && ref.Name == "" {
+			return nil, fmt.Errorf("qb: %s field cannot be empty", label)
+		}
+		if projection.Alias == "" {
+			appended = append(appended, Projection{Expr: CloneScalar(projection.Expr)})
+			continue
+		}
+		appended = append(appended, projection.Clone())
 	}
 
 	return appended, nil

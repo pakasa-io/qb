@@ -341,11 +341,11 @@ func (s Schema) Normalize(query qb.Query) (qb.Query, error) {
 		normalized.Sorts = sorts
 	}
 
-	selects, err := s.rewriteScalars(normalized.Selects, s.ResolveField, qb.StageNormalize)
+	projections, err := s.rewriteProjections(normalized.Projections, s.ResolveField, qb.StageNormalize)
 	if err != nil {
 		return qb.Query{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageNormalize))
 	}
-	normalized.Selects = selects
+	normalized.Projections = projections
 
 	groupBy, err := s.rewriteScalars(normalized.GroupBy, s.ResolveField, qb.StageNormalize)
 	if err != nil {
@@ -405,11 +405,11 @@ func (s Schema) ToStorage(query qb.Query) (qb.Query, error) {
 		projected.Sorts = sorts
 	}
 
-	selects, err := s.rewriteScalars(projected.Selects, s.ResolveStorageField, qb.StageRewrite)
+	projections, err := s.rewriteProjections(projected.Projections, s.ResolveStorageField, qb.StageRewrite)
 	if err != nil {
 		return qb.Query{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageRewrite))
 	}
-	projected.Selects = selects
+	projected.Projections = projections
 
 	groupBy, err := s.rewriteScalars(projected.GroupBy, s.ResolveStorageField, qb.StageRewrite)
 	if err != nil {
@@ -572,6 +572,23 @@ func (s Schema) rewriteScalars(values []qb.Scalar, resolver func(string) (string
 			return nil, err
 		}
 		rewritten[i] = expr
+	}
+
+	return rewritten, nil
+}
+
+func (s Schema) rewriteProjections(values []qb.Projection, resolver func(string) (string, error), stage qb.ErrorStage) ([]qb.Projection, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	rewritten := make([]qb.Projection, len(values))
+	for i, value := range values {
+		expr, err := s.rewriteScalar(value.Expr, resolver, stage)
+		if err != nil {
+			return nil, err
+		}
+		rewritten[i] = qb.Projection{Expr: expr, Alias: value.Alias}
 	}
 
 	return rewritten, nil

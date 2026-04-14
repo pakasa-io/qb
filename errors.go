@@ -25,6 +25,7 @@ const (
 	CodeInvalidQuery        ErrorCode = "invalid_query"
 	CodeUnknownField        ErrorCode = "unknown_field"
 	CodeUnsupportedOperator ErrorCode = "unsupported_operator"
+	CodeUnsupportedFunction ErrorCode = "unsupported_function"
 	CodeUnsupportedFeature  ErrorCode = "unsupported_feature"
 )
 
@@ -36,6 +37,7 @@ type Error struct {
 	Path     string
 	Field    string
 	Operator Operator
+	Function string
 	Err      error
 }
 
@@ -59,6 +61,9 @@ func (e *Error) Error() string {
 	}
 	if e.Operator != "" {
 		parts = append(parts, "op="+string(e.Operator))
+	}
+	if e.Function != "" {
+		parts = append(parts, "fn="+e.Function)
 	}
 
 	prefix := strings.Join(parts, " ")
@@ -135,6 +140,13 @@ func WithOperator(op Operator) ErrorOption {
 	}
 }
 
+// WithFunction sets the function associated with the error.
+func WithFunction(name string) ErrorOption {
+	return func(err *Error) {
+		err.Function = name
+	}
+}
+
 // NewError creates a new structured error.
 func NewError(err error, opts ...ErrorOption) error {
 	if err == nil {
@@ -164,4 +176,14 @@ func WrapError(err error, opts ...ErrorOption) error {
 	}
 
 	return NewError(err, opts...)
+}
+
+// UnsupportedFunction creates a structured unsupported-function error.
+func UnsupportedFunction(stage ErrorStage, dialect string, function string) error {
+	return NewError(
+		errors.New("function is not supported by dialect "+dialect),
+		WithStage(stage),
+		WithCode(CodeUnsupportedFunction),
+		WithFunction(function),
+	)
 }

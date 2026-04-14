@@ -66,8 +66,8 @@ func TestParseTopLevelConstructs(t *testing.T) {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
-	if len(query.Selects) != 2 || refName(query.Selects[0]) != "id" || refName(query.Selects[1]) != "status" {
-		t.Fatalf("unexpected selects: %#v", query.Selects)
+	if len(query.Projections) != 2 || projectionRefName(query.Projections[0]) != "id" || projectionRefName(query.Projections[1]) != "status" {
+		t.Fatalf("unexpected selects: %#v", query.Projections)
 	}
 
 	if len(query.Includes) != 2 || query.Includes[0] != "Customer" || query.Includes[1] != "Orders" {
@@ -132,4 +132,8 @@ func refName(expr qb.Scalar) string {
 		return ""
 	}
 	return ref.Name
+}
+
+func projectionRefName(projection qb.Projection) string {
+	return refName(projection.Expr)
 }

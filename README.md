@@ -12,8 +12,9 @@ Core helpers now also include:
 - `qb.RewriteQuery` for AST-level rewrites
 - `qb.QueryTransformer` and `qb.ComposeTransformers` for shared pipelines
 - first-class scalar expressions via `qb.F`, `qb.V`, and `qb.Func`
+- first-class projections via `qb.Project(...)` and `expr.As("alias")`
 - structured `qb.Error` values for parse/normalize/rewrite/compile/apply failures
-- adapter capability metadata for early validation
+- dialect function/operator capability metadata for early validation
 
 ## Goals
 
@@ -29,7 +30,7 @@ Core helpers now also include:
 - `schema`: optional field policy layer for aliases, operator allowlists, and decoding
 - `parser/mapinput`: parse normalized maps or JSON documents
 - `parser/querystring`: parse bracket-notation query strings
-- `adapter/sql`: compile to parameterized SQL fragments with pluggable dialects
+- `adapter/sql`: compile to parameterized SQL fragments with pluggable dialect registries and a shared renderer
 
 For runnable examples, see [examples/README.md](examples/README.md).
 For the long-form narrative guide, see [docs/EXAMPLES.md](docs/EXAMPLES.md).
@@ -71,6 +72,17 @@ query, err := qb.New().
     SelectExpr(qb.Lower(qb.F("users.name")), qb.F("users.age")).
     Where(qb.Lower(qb.F("users.name")).Eq("john")).
     Where(qb.F("users.name").Eq(qb.Lower("JOHN"))).
+    Query()
+```
+
+Selected expressions are projections, so aliases are first-class:
+
+```go
+query, err := qb.New().
+    SelectProjection(
+        qb.F("users.name").Lower().As("normalized_name"),
+        qb.F("users.age").As("age"),
+    ).
     Query()
 ```
 

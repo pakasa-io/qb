@@ -301,6 +301,10 @@ func JsonObject(args ...any) Call {
 	return Func("json_object", args...)
 }
 
+func (r Ref) As(alias string) Projection     { return Project(r).As(alias) }
+func (l Literal) As(alias string) Projection { return Project(l).As(alias) }
+func (c Call) As(alias string) Projection    { return Project(c).As(alias) }
+
 // AsScalar reports whether value is already a scalar expression.
 func AsScalar(value any) (Scalar, bool) {
 	switch typed := value.(type) {
