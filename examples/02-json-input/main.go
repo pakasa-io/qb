@@ -9,7 +9,19 @@ import (
 
 func main() {
 	payload := []byte(`{
-		"pick": ["status", "role"],
+		"pick": [
+			{
+				"$as": "normalized_name",
+				"$expr": {
+					"$call": "lower",
+					"args": [
+						{ "$field": "users.name" }
+					]
+				}
+			},
+			"status",
+			"role"
+		],
 		"where": {
 			"status": "active",
 			"age": { "$gte": 18 },
@@ -18,7 +30,16 @@ func main() {
 				{ "role": "owner" }
 			]
 		},
-		"group_by": ["status", "role"],
+		"group_by": [
+			{
+				"$call": "lower",
+				"args": [
+					{ "$field": "users.name" }
+				]
+			},
+			"status",
+			"role"
+		],
 		"sort": ["-created_at"],
 		"page": 3,
 		"size": 10

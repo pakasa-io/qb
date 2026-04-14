@@ -142,6 +142,66 @@ func TestParseSelectIncludeGroupByAndPageSize(t *testing.T) {
 	}
 }
 
+func TestParseStructuredProjectionAliases(t *testing.T) {
+	input := map[string]any{
+		"select": []any{
+			map[string]any{
+				"$as": "normalized_name",
+				"$expr": map[string]any{
+					"$call": "lower",
+					"args": []any{
+						map[string]any{"$field": "users.name"},
+					},
+				},
+			},
+			"users.age",
+		},
+		"group_by": []any{
+			map[string]any{
+				"$call": "lower",
+				"args": []any{
+					map[string]any{"$field": "users.name"},
+				},
+			},
+		},
+	}
+
+	query, err := mapinput.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	if len(query.Projections) != 2 {
+		t.Fatalf("unexpected projections: %#v", query.Projections)
+	}
+
+	if query.Projections[0].Alias != "normalized_name" {
+		t.Fatalf("unexpected projection alias: %#v", query.Projections[0])
+	}
+
+	if _, ok := query.Projections[0].Expr.(qb.Call); !ok {
+		t.Fatalf("expected function projection, got %T", query.Projections[0].Expr)
+	}
+
+	if len(query.GroupBy) != 1 {
+		t.Fatalf("unexpected group_by: %#v", query.GroupBy)
+	}
+
+	if _, ok := query.GroupBy[0].(qb.Call); !ok {
+		t.Fatalf("expected function group_by expression, got %T", query.GroupBy[0])
+	}
+
+	statement, err := sqladapter.New().Compile(query)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	wantSQL := `SELECT LOWER("users"."name") AS "normalized_name", "users"."age" GROUP BY LOWER("users"."name")`
+	if statement.SQL != wantSQL {
+		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
+	}
+}
+
 func TestParseCursor(t *testing.T) {
 	query, err := mapinput.Parse(map[string]any{
 		"cursor": map[string]any{

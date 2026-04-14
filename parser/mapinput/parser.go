@@ -76,11 +76,11 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 	if selectKey, rawSelect, ok, err := pickExclusiveValue(input, "select", "pick"); err != nil {
 		return qb.Query{}, parseError(err, qb.CodeInvalidInput)
 	} else if ok {
-		selects, err := parseNames(rawSelect, selectKey)
+		projections, err := parseProjectionList(rawSelect, selectKey)
 		if err != nil {
 			return qb.Query{}, err
 		}
-		query.Projections = namesToProjections(selects)
+		query.Projections = projections
 	}
 
 	if rawInclude, ok := pickValue(input, "include"); ok {
@@ -92,11 +92,11 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 	}
 
 	if rawGroupBy, ok := pickValue(input, "group_by"); ok {
-		groupBy, err := parseNames(rawGroupBy, "group_by")
+		groupBy, err := parseGroupByList(rawGroupBy, "group_by")
 		if err != nil {
 			return qb.Query{}, err
 		}
-		query.GroupBy = namesToRefs(groupBy)
+		query.GroupBy = groupBy
 	}
 
 	if where, ok := pickObject(input, "where", "filter"); ok {
@@ -527,32 +527,6 @@ func parseNames(node any, path string) ([]string, error) {
 	}
 
 	return names, nil
-}
-
-func namesToRefs(values []string) []qb.Scalar {
-	if len(values) == 0 {
-		return nil
-	}
-
-	out := make([]qb.Scalar, len(values))
-	for i, value := range values {
-		out[i] = qb.F(value)
-	}
-
-	return out
-}
-
-func namesToProjections(values []string) []qb.Projection {
-	if len(values) == 0 {
-		return nil
-	}
-
-	out := make([]qb.Projection, len(values))
-	for i, value := range values {
-		out[i] = qb.Project(qb.F(value))
-	}
-
-	return out
 }
 
 func parseCursor(node any, path string) (*qb.Cursor, error) {

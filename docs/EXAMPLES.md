@@ -74,7 +74,18 @@ Use `parser/mapinput` when your API receives a JSON body or a decoded
 
 ```go
 payload := []byte(`{
-  "pick": ["id", "status"],
+  "pick": [
+    {
+      "$as": "normalized_name",
+      "$expr": {
+        "$call": "lower",
+        "args": [
+          { "$field": "users.name" }
+        ]
+      }
+    },
+    "users.age"
+  ],
   "where": {
     "status": "active",
     "age": { "$gte": 18 },
@@ -84,7 +95,14 @@ payload := []byte(`{
     ]
   },
   "include": ["Customer"],
-  "group_by": ["id", "status"],
+  "group_by": [
+    {
+      "$call": "lower",
+      "args": [
+        { "$field": "users.name" }
+      ]
+    }
+  ],
   "sort": ["-created_at", "name"],
   "page": 3,
   "size": 20
@@ -113,6 +131,27 @@ Supported top-level constructs:
 - `cursor`
 - legacy `limit` and `offset`
 
+Canonical structured projection form:
+
+```json
+{
+  "$as": "normalized_name",
+  "$expr": {
+    "$call": "lower",
+    "args": [
+      { "$field": "users.name" }
+    ]
+  }
+}
+```
+
+Expression objects support:
+
+- `$field`
+- `$call` with `args`
+- `$value`
+- `$expr` when a projection also needs `$as`
+
 Supported filter operators:
 
 - `$eq`, `$ne`
@@ -128,14 +167,18 @@ Use `parser/querystring` when your API receives HTTP query parameters.
 
 ```go
 values := url.Values{
-	"pick":                        {"id,status"},
+	"pick[0][$as]":                {"normalized_name"},
+	"pick[0][$expr][$call]":       {"lower"},
+	"pick[0][$expr][args][0][$field]": {"users.name"},
+	"pick[1]":                     {"users.age"},
 	"include":                     {"Customer"},
 	"where[status][$eq]":      {"active"},
 	"where[age][$gte]":        {"21"},
 	"where[$or][0][role][$eq]": {"admin"},
 	"where[$or][1][role][$eq]": {"owner"},
 	"sort":                    {"-created_at,name"},
-	"group_by":                {"id,status"},
+	"group_by[0][$call]":      {"lower"},
+	"group_by[0][args][0][$field]": {"users.name"},
 	"page":                    {"2"},
 	"size":                    {"10"},
 }

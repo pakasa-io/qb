@@ -198,15 +198,49 @@ go test ./...
 
 Structured input supports these top-level constructs:
 
-- `select` or `pick`: comma-delimited string or array of projected fields
+- `select` or `pick`: comma-delimited string, array of projected fields, or structured projection objects with `$expr` and optional `$as`
 - `include`: comma-delimited string or array of eager-load/include paths
 - `where` or `filter`: nested filter object
 - `sort`: comma-delimited string or array such as `["-created_at", "name"]`
-- `group_by`: comma-delimited string or array of grouping fields
+- `group_by`: comma-delimited string, array of grouping fields, or scalar expression objects
 - `page`: 1-based page number for offset pagination
 - `size`: page size for both offset and cursor pagination
 - `cursor`: opaque token string or object payload for cursor pagination
 - `limit` and `offset`: accepted for backward compatibility, but `page` and `size` are preferred
+
+Canonical structured projections use expression objects:
+
+```json
+{
+  "select": [
+    {
+      "$as": "normalized_name",
+      "$expr": {
+        "$call": "lower",
+        "args": [
+          { "$field": "users.name" }
+        ]
+      }
+    },
+    "users.age"
+  ],
+  "group_by": [
+    {
+      "$call": "lower",
+      "args": [
+        { "$field": "users.name" }
+      ]
+    }
+  ]
+}
+```
+
+Supported scalar expression constructs inside structured projections and grouping:
+
+- `$field`: field reference
+- `$call`: function name with `args`
+- `$value`: explicit literal value
+- `$expr`: wrapper used when a projection also needs `$as`
 
 Supported filter operators:
 

@@ -92,6 +92,52 @@ func TestParseTopLevelConstructs(t *testing.T) {
 	}
 }
 
+func TestParseStructuredProjectionAliases(t *testing.T) {
+	values := url.Values{
+		"pick[0][$as]":                    {"normalized_name"},
+		"pick[0][$expr][$call]":           {"lower"},
+		"pick[0][$expr][args][0][$field]": {"users.name"},
+		"pick[1]":                         {"users.age"},
+		"group_by[0][$call]":              {"lower"},
+		"group_by[0][args][0][$field]":    {"users.name"},
+	}
+
+	query, err := querystring.Parse(values)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	if len(query.Projections) != 2 {
+		t.Fatalf("unexpected projections: %#v", query.Projections)
+	}
+
+	if query.Projections[0].Alias != "normalized_name" {
+		t.Fatalf("unexpected alias: %#v", query.Projections[0])
+	}
+
+	if _, ok := query.Projections[0].Expr.(qb.Call); !ok {
+		t.Fatalf("expected function projection, got %T", query.Projections[0].Expr)
+	}
+
+	if len(query.GroupBy) != 1 {
+		t.Fatalf("unexpected group_by: %#v", query.GroupBy)
+	}
+
+	if _, ok := query.GroupBy[0].(qb.Call); !ok {
+		t.Fatalf("expected function group_by expression, got %T", query.GroupBy[0])
+	}
+
+	statement, err := sqladapter.New(sqladapter.WithDialect(sqladapter.DollarDialect{})).Compile(query)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	wantSQL := `SELECT LOWER("users"."name") AS "normalized_name", "users"."age" GROUP BY LOWER("users"."name")`
+	if statement.SQL != wantSQL {
+		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
+	}
+}
+
 func TestParseCursor(t *testing.T) {
 	values := url.Values{
 		"cursor[created_at]": {"2026-04-11T12:00:00Z"},
