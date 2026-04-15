@@ -31,5 +31,10 @@ Examples are ordered so you can read them progressively:
 - [`18-json-analytics`](./18-json-analytics): parse reporting-style JSON input with date functions, JSON helpers, aggregates, and grouping
 - [`19-schema-gorm`](./19-schema-gorm): parse public API input, normalize through schema, project to storage, and apply it through GORM
 - [`20-capabilities`](./20-capabilities): inspect dialect capability support and see unsupported features fail predictably
+- [`21-default-dialect`](./21-default-dialect): switch the process-wide default SQL dialect and override it per compiler
+- [`22-scalar-toolbox`](./22-scalar-toolbox): use more of the string, math, and general scalar helpers in one query
+- [`23-json-date-toolbox`](./23-json-date-toolbox): use PostgreSQL-first JSON and date helpers like `date_bin`, `extract`, and JSON constructors
+- [`24-querystring-literals`](./24-querystring-literals): show that query-string leaf values stay strings unless schema decoding changes them
+- [`25-preflight-pipeline`](./25-preflight-pipeline): run a query through a manual normalize, rewrite, storage-map, and capability-validation pipeline
 
 The long-form narrative guide still lives in [`docs/EXAMPLES.md`](../docs/EXAMPLES.md).
