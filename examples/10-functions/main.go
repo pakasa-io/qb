@@ -28,6 +28,7 @@ func main() {
 			qb.F("users.name").Substring(1, 4).Eq("john"),
 			qb.F("users.name").Eq(qb.V("JOHN").Lower()),
 		)).
+		Where(qb.F("users.gender").Lower().Eq("male")).
 		Query()
 	if err != nil {
 		panic(err)
