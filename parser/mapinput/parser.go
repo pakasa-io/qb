@@ -18,12 +18,16 @@ type ValueDecoder func(field string, op qb.Operator, value any) (any, error)
 // FilterFieldResolver canonicalizes and validates filter fields.
 type FilterFieldResolver func(field string, op qb.Operator) (string, error)
 
+// GroupFieldResolver canonicalizes and validates grouping fields.
+type GroupFieldResolver func(field string) (string, error)
+
 // SortFieldResolver canonicalizes and validates sort fields.
 type SortFieldResolver func(field string) (string, error)
 
 type options struct {
 	valueDecoder        ValueDecoder
 	filterFieldResolver FilterFieldResolver
+	groupFieldResolver  GroupFieldResolver
 	sortFieldResolver   SortFieldResolver
 }
 
@@ -44,11 +48,29 @@ func WithFilterFieldResolver(resolver FilterFieldResolver) Option {
 	}
 }
 
+// WithGroupFieldResolver sets a hook for canonicalizing grouping fields.
+func WithGroupFieldResolver(resolver GroupFieldResolver) Option {
+	return func(opts *options) {
+		opts.groupFieldResolver = resolver
+	}
+}
+
 // WithSortFieldResolver sets a hook for canonicalizing sort fields.
 func WithSortFieldResolver(resolver SortFieldResolver) Option {
 	return func(opts *options) {
 		opts.sortFieldResolver = resolver
 	}
+}
+
+var allowedTopLevelKeys = map[string]struct{}{
+	"$select":  {},
+	"$include": {},
+	"$where":   {},
+	"$group":   {},
+	"$sort":    {},
+	"$page":    {},
+	"$size":    {},
+	"$cursor":  {},
 }
 
 // ParseJSON decodes JSON input and parses it into a query.
@@ -64,89 +86,71 @@ func ParseJSON(data []byte, opts ...Option) (qb.Query, error) {
 	return Parse(payload, opts...)
 }
 
-// Parse converts a normalized object into a query.
+// Parse converts a normalized object into a query using the compact `$...`
+// envelope and scalar DSL.
 func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 	config := options{}
 	for _, opt := range opts {
 		opt(&config)
 	}
 
+	document := normalizeObject(input)
+	if err := validateTopLevel(document); err != nil {
+		return qb.Query{}, err
+	}
+
 	var query qb.Query
 
-	if selectKey, rawSelect, ok, err := pickExclusiveValue(input, "select", "pick"); err != nil {
-		return qb.Query{}, parseError(err, qb.CodeInvalidInput)
-	} else if ok {
-		projections, err := parseProjectionList(rawSelect, selectKey)
+	if raw, ok := pickValue(document, "$select"); ok {
+		projections, err := parseSelect(raw, config, "$select")
 		if err != nil {
 			return qb.Query{}, err
 		}
 		query.Projections = projections
 	}
 
-	if rawInclude, ok := pickValue(input, "include"); ok {
-		includes, err := parseNames(rawInclude, "include")
+	if raw, ok := pickValue(document, "$include"); ok {
+		includes, err := parseIncludes(raw, "$include")
 		if err != nil {
 			return qb.Query{}, err
 		}
 		query.Includes = includes
 	}
 
-	if rawGroupBy, ok := pickValue(input, "group_by"); ok {
-		groupBy, err := parseGroupByList(rawGroupBy, "group_by")
+	if raw, ok := pickValue(document, "$group"); ok {
+		groupBy, err := parseGroup(raw, config, "$group")
 		if err != nil {
 			return qb.Query{}, err
 		}
 		query.GroupBy = groupBy
 	}
 
-	if where, ok := pickObject(input, "where", "filter"); ok {
-		filter, err := parseExpr(where, config, "where")
+	if raw, ok := pickValue(document, "$where"); ok {
+		where, ok := raw.(map[string]any)
+		if !ok {
+			return qb.Query{}, parseError(
+				fmt.Errorf("expected object"),
+				qb.CodeInvalidInput,
+				qb.WithPath("$where"),
+			)
+		}
+		filter, err := parseWhere(where, config, "$where")
 		if err != nil {
 			return qb.Query{}, err
 		}
 		query.Filter = filter
 	}
 
-	if rawSort, ok := pickValue(input, "sort"); ok {
-		sorts, err := parseSorts(rawSort, config)
+	if raw, ok := pickValue(document, "$sort"); ok {
+		sorts, err := parseSorts(raw, config, "$sort")
 		if err != nil {
 			return qb.Query{}, err
 		}
 		query.Sorts = sorts
 	}
 
-	if rawLimit, ok := pickValue(input, "limit"); ok {
-		limit, err := parseInteger(rawLimit, "limit")
-		if err != nil {
-			return qb.Query{}, err
-		}
-		if limit < 0 {
-			return qb.Query{}, parseError(
-				fmt.Errorf("limit cannot be negative"),
-				qb.CodeInvalidValue,
-				qb.WithPath("limit"),
-			)
-		}
-		query.Limit = &limit
-	}
-
-	if rawOffset, ok := pickValue(input, "offset"); ok {
-		offset, err := parseInteger(rawOffset, "offset")
-		if err != nil {
-			return qb.Query{}, err
-		}
-		if offset < 0 {
-			return qb.Query{}, parseError(
-				fmt.Errorf("offset cannot be negative"),
-				qb.CodeInvalidValue,
-				qb.WithPath("offset"),
-			)
-		}
-		query.Offset = &offset
-	}
-
-	if rawPage, ok := pickValue(input, "page"); ok {
-		page, err := parseInteger(rawPage, "page")
+	if raw, ok := pickValue(document, "$page"); ok {
+		page, err := parseInteger(raw, "$page")
 		if err != nil {
 			return qb.Query{}, err
 		}
@@ -154,14 +158,14 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 			return qb.Query{}, parseError(
 				fmt.Errorf("page must be greater than or equal to 1"),
 				qb.CodeInvalidValue,
-				qb.WithPath("page"),
+				qb.WithPath("$page"),
 			)
 		}
 		query.Page = &page
 	}
 
-	if rawSize, ok := pickValue(input, "size"); ok {
-		size, err := parseInteger(rawSize, "size")
+	if raw, ok := pickValue(document, "$size"); ok {
+		size, err := parseInteger(raw, "$size")
 		if err != nil {
 			return qb.Query{}, err
 		}
@@ -169,14 +173,14 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 			return qb.Query{}, parseError(
 				fmt.Errorf("size must be greater than or equal to 1"),
 				qb.CodeInvalidValue,
-				qb.WithPath("size"),
+				qb.WithPath("$size"),
 			)
 		}
 		query.Size = &size
 	}
 
-	if rawCursor, ok := pickValue(input, "cursor"); ok {
-		cursor, err := parseCursor(rawCursor, "cursor")
+	if raw, ok := pickValue(document, "$cursor"); ok {
+		cursor, err := parseCursor(raw, "$cursor")
 		if err != nil {
 			return qb.Query{}, err
 		}
@@ -190,21 +194,185 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 	return query, nil
 }
 
-func parseExpr(node any, opts options, path string) (qb.Expr, error) {
-	object, ok := node.(map[string]any)
-	if !ok {
+func validateTopLevel(input map[string]any) error {
+	for _, key := range sortedKeys(input) {
+		if _, ok := allowedTopLevelKeys[key]; ok {
+			continue
+		}
+		return parseError(
+			fmt.Errorf("unknown top-level key %q", key),
+			qb.CodeInvalidInput,
+			qb.WithPath(key),
+		)
+	}
+	return nil
+}
+
+func parseSelect(node any, opts options, path string) ([]qb.Projection, error) {
+	switch typed := node.(type) {
+	case string:
+		fields, err := parseSimpleFieldList(typed, path)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]qb.Projection, len(fields))
+		for i, field := range fields {
+			out[i] = qb.Project(qb.F(field))
+		}
+		return out, nil
+	case []any:
+		out := make([]qb.Projection, 0, len(typed))
+		for i, item := range typed {
+			value, ok := item.(string)
+			if !ok {
+				return nil, parseError(
+					fmt.Errorf("expected string, got %T", item),
+					qb.CodeInvalidInput,
+					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+				)
+			}
+			expr, alias, err := parseStandaloneScalar(value, true)
+			if err != nil {
+				return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(fmt.Sprintf("%s[%d]", path, i)))
+			}
+			projection := qb.Project(expr)
+			if alias != "" {
+				projection = projection.As(alias)
+			}
+			out = append(out, projection)
+		}
+		return out, nil
+	default:
 		return nil, parseError(
-			fmt.Errorf("expected object"),
+			fmt.Errorf("expected string or list, got %T", node),
 			qb.CodeInvalidInput,
 			qb.WithPath(path),
 		)
 	}
+}
 
-	keys := sortedKeys(object)
+func parseIncludes(node any, path string) ([]string, error) {
+	return parseDelimitedStrings(node, path)
+}
+
+func parseGroup(node any, opts options, path string) ([]qb.Scalar, error) {
+	switch typed := node.(type) {
+	case string:
+		fields, err := parseSimpleFieldList(typed, path)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]qb.Scalar, len(fields))
+		for i, field := range fields {
+			out[i] = qb.F(field)
+		}
+		return resolveGroupScalars(out, opts, path)
+	case []any:
+		out := make([]qb.Scalar, 0, len(typed))
+		for i, item := range typed {
+			value, ok := item.(string)
+			if !ok {
+				return nil, parseError(
+					fmt.Errorf("expected string, got %T", item),
+					qb.CodeInvalidInput,
+					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+				)
+			}
+			expr, alias, err := parseStandaloneScalar(value, false)
+			if err != nil {
+				return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(fmt.Sprintf("%s[%d]", path, i)))
+			}
+			if alias != "" {
+				return nil, parseError(
+					fmt.Errorf("aliases are not allowed in $group"),
+					qb.CodeInvalidInput,
+					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+				)
+			}
+			out = append(out, expr)
+		}
+		return resolveGroupScalars(out, opts, path)
+	default:
+		return nil, parseError(
+			fmt.Errorf("expected string or list, got %T", node),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
+	}
+}
+
+func parseSorts(node any, opts options, path string) ([]qb.Sort, error) {
+	switch typed := node.(type) {
+	case string:
+		items := splitCSV(typed)
+		sorts := make([]qb.Sort, 0, len(items))
+		for i, item := range items {
+			if item == "" {
+				continue
+			}
+			direction := qb.Asc
+			field := item
+			if strings.HasPrefix(field, "-") {
+				direction = qb.Desc
+				field = strings.TrimPrefix(field, "-")
+			}
+			if strings.HasPrefix(field, "+") {
+				return nil, parseError(
+					fmt.Errorf("simple $sort shorthand does not support +field"),
+					qb.CodeInvalidInput,
+					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+				)
+			}
+			if !isSimpleFieldRef(field) {
+				return nil, parseError(
+					fmt.Errorf("expression-bearing sorts must use arrays"),
+					qb.CodeInvalidInput,
+					qb.WithPath(path),
+				)
+			}
+			expr, err := resolveSortScalar(qb.F(field), opts, fmt.Sprintf("%s[%d]", path, i))
+			if err != nil {
+				return nil, err
+			}
+			sorts = append(sorts, qb.Sort{Expr: expr, Direction: direction})
+		}
+		return sorts, nil
+	case []any:
+		sorts := make([]qb.Sort, 0, len(typed))
+		for i, item := range typed {
+			value, ok := item.(string)
+			if !ok {
+				return nil, parseError(
+					fmt.Errorf("expected string, got %T", item),
+					qb.CodeInvalidInput,
+					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+				)
+			}
+			expr, direction, err := parseSortItem(value)
+			if err != nil {
+				return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(fmt.Sprintf("%s[%d]", path, i)))
+			}
+			expr, err = resolveSortScalar(expr, opts, fmt.Sprintf("%s[%d]", path, i))
+			if err != nil {
+				return nil, err
+			}
+			sorts = append(sorts, qb.Sort{Expr: expr, Direction: direction})
+		}
+		return sorts, nil
+	default:
+		return nil, parseError(
+			fmt.Errorf("expected string or list, got %T", node),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
+	}
+}
+
+func parseWhere(node map[string]any, opts options, path string) (qb.Expr, error) {
+	keys := sortedKeys(node)
 	exprs := make([]qb.Expr, 0, len(keys))
-
 	for _, key := range keys {
-		value := object[key]
+		value := node[key]
 		switch key {
 		case "$and":
 			expr, err := parseLogicalGroup(qb.And, value, opts, path+".$and")
@@ -219,20 +387,33 @@ func parseExpr(node any, opts options, path string) (qb.Expr, error) {
 			}
 			exprs = append(exprs, expr)
 		case "$not":
-			expr, err := parseNegation(value, opts, path+".$not")
+			child, ok := value.(map[string]any)
+			if !ok {
+				return nil, parseError(
+					fmt.Errorf("expected object"),
+					qb.CodeInvalidInput,
+					qb.WithPath(path+".$not"),
+				)
+			}
+			expr, err := parseWhere(child, opts, path+".$not")
+			if err != nil {
+				return nil, err
+			}
+			exprs = append(exprs, qb.Not(expr))
+		case "$expr":
+			expr, err := parseExpressionPredicates(value, opts, path+".$expr")
 			if err != nil {
 				return nil, err
 			}
 			exprs = append(exprs, expr)
 		default:
-			expr, err := parseField(key, value, opts, path+"."+key)
+			expr, err := parseComputedFilter(key, value, opts, path+"."+key)
 			if err != nil {
 				return nil, err
 			}
 			exprs = append(exprs, expr)
 		}
 	}
-
 	return qb.And(exprs...), nil
 }
 
@@ -244,7 +425,15 @@ func parseLogicalGroup(combine func(...qb.Expr) qb.Expr, node any, opts options,
 
 	exprs := make([]qb.Expr, 0, len(items))
 	for i, item := range items {
-		expr, err := parseExpr(item, opts, fmt.Sprintf("%s[%d]", path, i))
+		object, ok := item.(map[string]any)
+		if !ok {
+			return nil, parseError(
+				fmt.Errorf("expected object, got %T", item),
+				qb.CodeInvalidInput,
+				qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+			)
+		}
+		expr, err := parseWhere(object, opts, fmt.Sprintf("%s[%d]", path, i))
 		if err != nil {
 			return nil, err
 		}
@@ -254,279 +443,455 @@ func parseLogicalGroup(combine func(...qb.Expr) qb.Expr, node any, opts options,
 	return combine(exprs...), nil
 }
 
-func parseNegation(node any, opts options, path string) (qb.Expr, error) {
-	expr, err := parseExpr(node, opts, path)
+func parseComputedFilter(key string, node any, opts options, path string) (qb.Expr, error) {
+	left, alias, err := parseStandaloneScalar(key, false)
 	if err != nil {
-		return nil, err
+		return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(path))
+	}
+	if alias != "" {
+		return nil, parseError(
+			fmt.Errorf("aliases are not allowed inside $where"),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
 	}
 
-	return qb.Not(expr), nil
-}
-
-func parseField(field string, node any, opts options, path string) (qb.Expr, error) {
 	switch typed := node.(type) {
 	case map[string]any:
 		keys := sortedKeys(typed)
 		exprs := make([]qb.Expr, 0, len(keys))
-
 		for _, key := range keys {
-			expr, err := parseOperator(field, key, typed[key], opts, path+"."+key)
+			op, err := parseOperatorName(key, path+"."+key)
+			if err != nil {
+				return nil, err
+			}
+			expr, err := parsePredicate(left, op, typed[key], opts, path+"."+key)
 			if err != nil {
 				return nil, err
 			}
 			exprs = append(exprs, expr)
 		}
-
 		return qb.And(exprs...), nil
 	case []any:
-		resolvedField, err := resolveFilterField(field, qb.OpIn, opts, path)
-		if err != nil {
-			return nil, err
-		}
-
-		values, err := decodeList(resolvedField, qb.OpIn, typed, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).In(values...), nil
+		return parsePredicate(left, qb.OpIn, typed, opts, path)
 	default:
-		resolvedField, err := resolveFilterField(field, qb.OpEq, opts, path)
-		if err != nil {
-			return nil, err
-		}
-
-		value, err := decodeValue(resolvedField, qb.OpEq, typed, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).Eq(value), nil
+		return parsePredicate(left, qb.OpEq, typed, opts, path)
 	}
 }
 
-func parseOperator(field, operator string, node any, opts options, path string) (qb.Expr, error) {
-	switch operator {
-	case "$eq":
-		resolvedField, err := resolveFilterField(field, qb.OpEq, opts, path)
-		if err != nil {
+func parsePredicate(left qb.Scalar, op qb.Operator, node any, opts options, path string) (qb.Expr, error) {
+	resolvedLeft, err := resolveFilterScalar(left, op, opts, path)
+	if err != nil {
+		return nil, err
+	}
+
+	field := predicatePrimaryField(resolvedLeft)
+	switch op {
+	case qb.OpIsNull, qb.OpNotNull:
+		if err := validateUnaryPredicateOperand(node, path); err != nil {
 			return nil, err
 		}
-		value, err := decodeValue(resolvedField, qb.OpEq, node, opts, path)
+		return qb.Predicate{Left: resolvedLeft, Op: op}, nil
+	case qb.OpIn, qb.OpNotIn:
+		values, err := asList(node, path)
 		if err != nil {
-			return nil, err
+			return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(path))
 		}
-		return qb.Field(resolvedField).Eq(value), nil
-	case "$ne":
-		resolvedField, err := resolveFilterField(field, qb.OpNe, opts, path)
-		if err != nil {
-			return nil, err
+		items := make([]qb.Scalar, len(values))
+		for i, value := range values {
+			decoded, err := decodeValue(field, op, value, opts, fmt.Sprintf("%s[%d]", path, i))
+			if err != nil {
+				return nil, err
+			}
+			items[i] = qb.V(decoded)
 		}
-		value, err := decodeValue(resolvedField, qb.OpNe, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).Ne(value), nil
-	case "$gt":
-		resolvedField, err := resolveFilterField(field, qb.OpGt, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		value, err := decodeValue(resolvedField, qb.OpGt, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).Gt(value), nil
-	case "$gte":
-		resolvedField, err := resolveFilterField(field, qb.OpGte, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		value, err := decodeValue(resolvedField, qb.OpGte, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).Gte(value), nil
-	case "$lt":
-		resolvedField, err := resolveFilterField(field, qb.OpLt, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		value, err := decodeValue(resolvedField, qb.OpLt, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).Lt(value), nil
-	case "$lte":
-		resolvedField, err := resolveFilterField(field, qb.OpLte, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		value, err := decodeValue(resolvedField, qb.OpLte, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).Lte(value), nil
-	case "$in":
-		resolvedField, err := resolveFilterField(field, qb.OpIn, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		values, err := decodeListFromNode(resolvedField, qb.OpIn, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).In(values...), nil
-	case "$nin":
-		resolvedField, err := resolveFilterField(field, qb.OpNotIn, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		values, err := decodeListFromNode(resolvedField, qb.OpNotIn, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).NotIn(values...), nil
-	case "$like":
-		resolvedField, err := resolveFilterField(field, qb.OpLike, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		value, err := decodeValue(resolvedField, qb.OpLike, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).Like(value), nil
-	case "$ilike":
-		resolvedField, err := resolveFilterField(field, qb.OpILike, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		value, err := decodeValue(resolvedField, qb.OpILike, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).ILike(value), nil
-	case "$regexp":
-		resolvedField, err := resolveFilterField(field, qb.OpRegexp, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		value, err := decodeValue(resolvedField, qb.OpRegexp, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).Regexp(value), nil
-	case "$contains":
-		resolvedField, err := resolveFilterField(field, qb.OpContains, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		value, err := decodeValue(resolvedField, qb.OpContains, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).Contains(value), nil
-	case "$prefix":
-		resolvedField, err := resolveFilterField(field, qb.OpPrefix, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		value, err := decodeValue(resolvedField, qb.OpPrefix, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).Prefix(value), nil
-	case "$suffix":
-		resolvedField, err := resolveFilterField(field, qb.OpSuffix, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		value, err := decodeValue(resolvedField, qb.OpSuffix, node, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).Suffix(value), nil
-	case "$isnull":
-		resolvedField, err := resolveFilterField(field, qb.OpIsNull, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).IsNull(), nil
-	case "$notnull":
-		resolvedField, err := resolveFilterField(field, qb.OpNotNull, opts, path)
-		if err != nil {
-			return nil, err
-		}
-		return qb.Field(resolvedField).NotNull(), nil
+		return qb.Predicate{
+			Left:  resolvedLeft,
+			Op:    op,
+			Right: qb.ListOperand{Items: items},
+		}, nil
 	default:
+		decoded, err := decodeValue(field, op, node, opts, path)
+		if err != nil {
+			return nil, err
+		}
+		return qb.Predicate{
+			Left:  resolvedLeft,
+			Op:    op,
+			Right: qb.ScalarOperand{Expr: qb.V(decoded)},
+		}, nil
+	}
+}
+
+func parseExpressionPredicates(node any, opts options, path string) (qb.Expr, error) {
+	object, ok := node.(map[string]any)
+	if !ok {
 		return nil, parseError(
-			fmt.Errorf("unsupported operator %q", operator),
+			fmt.Errorf("expected object"),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
+	}
+
+	keys := sortedKeys(object)
+	exprs := make([]qb.Expr, 0, len(keys))
+	for _, key := range keys {
+		op, err := parseOperatorName(key, path+"."+key)
+		if err != nil {
+			return nil, err
+		}
+		expr, err := parseExpressionPredicate(op, object[key], opts, path+"."+key)
+		if err != nil {
+			return nil, err
+		}
+		exprs = append(exprs, expr)
+	}
+	return qb.And(exprs...), nil
+}
+
+func parseExpressionPredicate(op qb.Operator, node any, opts options, path string) (qb.Expr, error) {
+	if op == qb.OpIsNull || op == qb.OpNotNull {
+		operand := node
+		if values, ok := node.([]any); ok {
+			if len(values) != 1 {
+				return nil, parseError(
+					fmt.Errorf("expected exactly one operand"),
+					qb.CodeInvalidInput,
+					qb.WithPath(path),
+				)
+			}
+			operand = values[0]
+		}
+
+		left, err := parseMixedScalar(operand, "", op, opts, path)
+		if err != nil {
+			return nil, err
+		}
+		left, err = resolveFilterScalar(left, op, opts, path)
+		if err != nil {
+			return nil, err
+		}
+		return qb.Predicate{Left: left, Op: op}, nil
+	}
+
+	values, err := asList(node, path)
+	if err != nil {
+		return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(path))
+	}
+	if len(values) == 0 {
+		return nil, parseError(
+			fmt.Errorf("expected at least one operand"),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
+	}
+
+	left, err := parseMixedScalar(values[0], "", op, opts, path+"[0]")
+	if err != nil {
+		return nil, err
+	}
+	left, err = resolveFilterScalar(left, op, opts, path+"[0]")
+	if err != nil {
+		return nil, err
+	}
+
+	field := predicatePrimaryField(left)
+	switch op {
+	case qb.OpIn, qb.OpNotIn:
+		rhs := values[1:]
+		if len(rhs) == 1 {
+			if list, ok := rhs[0].([]any); ok {
+				rhs = list
+			}
+		}
+		if len(rhs) == 0 {
+			return nil, parseError(
+				fmt.Errorf("expected one or more right-hand operands"),
+				qb.CodeInvalidInput,
+				qb.WithPath(path),
+			)
+		}
+		items := make([]qb.Scalar, len(rhs))
+		for i, value := range rhs {
+			item, err := parseMixedScalar(value, field, op, opts, fmt.Sprintf("%s[%d]", path, i+1))
+			if err != nil {
+				return nil, err
+			}
+			if item, err = resolveFilterScalar(item, op, opts, fmt.Sprintf("%s[%d]", path, i+1)); err != nil {
+				return nil, err
+			}
+			items[i] = item
+		}
+		return qb.Predicate{
+			Left:  left,
+			Op:    op,
+			Right: qb.ListOperand{Items: items},
+		}, nil
+	default:
+		if len(values) != 2 {
+			return nil, parseError(
+				fmt.Errorf("expected exactly two operands"),
+				qb.CodeInvalidInput,
+				qb.WithPath(path),
+			)
+		}
+		right, err := parseMixedScalar(values[1], field, op, opts, path+"[1]")
+		if err != nil {
+			return nil, err
+		}
+		if right, err = resolveFilterScalar(right, op, opts, path+"[1]"); err != nil {
+			return nil, err
+		}
+		return qb.Predicate{
+			Left:  left,
+			Op:    op,
+			Right: qb.ScalarOperand{Expr: right},
+		}, nil
+	}
+}
+
+func parseMixedScalar(node any, field string, op qb.Operator, opts options, path string) (qb.Scalar, error) {
+	node = normalizeValue(node)
+	if expr, ok := qb.AsScalar(node); ok {
+		return qb.CloneScalar(expr), nil
+	}
+
+	if value, ok := node.(string); ok {
+		trimmed := strings.TrimSpace(value)
+		if isMixedDSLString(trimmed) {
+			expr, alias, err := parseStandaloneScalar(trimmed, false)
+			if err != nil {
+				return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(path))
+			}
+			if alias != "" {
+				return nil, parseError(
+					fmt.Errorf("aliases are not allowed in mixed expression contexts"),
+					qb.CodeInvalidInput,
+					qb.WithPath(path),
+				)
+			}
+			return expr, nil
+		}
+		decoded, err := decodeValue(field, op, value, opts, path)
+		if err != nil {
+			return nil, err
+		}
+		return qb.V(decoded), nil
+	}
+
+	decoded, err := decodeValue(field, op, node, opts, path)
+	if err != nil {
+		return nil, err
+	}
+	return qb.V(decoded), nil
+}
+
+func parseOperatorName(name, path string) (qb.Operator, error) {
+	switch name {
+	case "$eq":
+		return qb.OpEq, nil
+	case "$ne":
+		return qb.OpNe, nil
+	case "$gt":
+		return qb.OpGt, nil
+	case "$gte":
+		return qb.OpGte, nil
+	case "$lt":
+		return qb.OpLt, nil
+	case "$lte":
+		return qb.OpLte, nil
+	case "$in":
+		return qb.OpIn, nil
+	case "$nin":
+		return qb.OpNotIn, nil
+	case "$like":
+		return qb.OpLike, nil
+	case "$ilike":
+		return qb.OpILike, nil
+	case "$regexp":
+		return qb.OpRegexp, nil
+	case "$contains":
+		return qb.OpContains, nil
+	case "$prefix":
+		return qb.OpPrefix, nil
+	case "$suffix":
+		return qb.OpSuffix, nil
+	case "$isnull":
+		return qb.OpIsNull, nil
+	case "$notnull":
+		return qb.OpNotNull, nil
+	default:
+		return "", parseError(
+			fmt.Errorf("unsupported operator %q", name),
 			qb.CodeUnsupportedOperator,
 			qb.WithPath(path),
-			qb.WithField(field),
 		)
 	}
 }
 
-func parseSorts(node any, opts options) ([]qb.Sort, error) {
-	rawItems, err := asStringList(node, "sort")
-	if err != nil {
-		return nil, err
+func resolveFilterScalar(expr qb.Scalar, op qb.Operator, opts options, path string) (qb.Scalar, error) {
+	if opts.filterFieldResolver == nil {
+		return expr, nil
 	}
-
-	sorts := make([]qb.Sort, 0, len(rawItems))
-	for _, item := range rawItems {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
+	return qb.RewriteScalar(expr, func(node qb.Scalar) (qb.Scalar, error) {
+		ref, ok := node.(qb.Ref)
+		if !ok {
+			return node, nil
 		}
-
-		direction := qb.Asc
-		field := item
-		if strings.HasPrefix(item, "-") {
-			direction = qb.Desc
-			field = strings.TrimPrefix(item, "-")
-		} else if strings.HasPrefix(item, "+") {
-			field = strings.TrimPrefix(item, "+")
-		}
-
-		if field == "" {
+		resolved, err := opts.filterFieldResolver(ref.Name, op)
+		if err != nil {
 			return nil, parseError(
-				fmt.Errorf("empty sort field"),
-				qb.CodeInvalidInput,
-				qb.WithPath("sort"),
+				err,
+				qb.CodeUnknownField,
+				qb.WithPath(path),
+				qb.WithField(ref.Name),
+				qb.WithOperator(op),
 			)
 		}
+		if strings.TrimSpace(resolved) == "" {
+			return nil, parseError(
+				fmt.Errorf("filter field resolver returned an empty field"),
+				qb.CodeInvalidInput,
+				qb.WithPath(path),
+				qb.WithField(ref.Name),
+				qb.WithOperator(op),
+			)
+		}
+		return qb.F(resolved), nil
+	})
+}
 
-		resolvedField, err := resolveSortField(field, opts)
+func resolveGroupScalar(expr qb.Scalar, opts options, path string) (qb.Scalar, error) {
+	if opts.groupFieldResolver == nil {
+		return expr, nil
+	}
+	return qb.RewriteScalar(expr, func(node qb.Scalar) (qb.Scalar, error) {
+		ref, ok := node.(qb.Ref)
+		if !ok {
+			return node, nil
+		}
+		resolved, err := opts.groupFieldResolver(ref.Name)
+		if err != nil {
+			return nil, parseError(
+				err,
+				qb.CodeUnknownField,
+				qb.WithPath(path),
+				qb.WithField(ref.Name),
+			)
+		}
+		if strings.TrimSpace(resolved) == "" {
+			return nil, parseError(
+				fmt.Errorf("group field resolver returned an empty field"),
+				qb.CodeInvalidInput,
+				qb.WithPath(path),
+				qb.WithField(ref.Name),
+			)
+		}
+		return qb.F(resolved), nil
+	})
+}
+
+func resolveGroupScalars(values []qb.Scalar, opts options, path string) ([]qb.Scalar, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	out := make([]qb.Scalar, len(values))
+	for i, expr := range values {
+		resolved, err := resolveGroupScalar(expr, opts, fmt.Sprintf("%s[%d]", path, i))
 		if err != nil {
 			return nil, err
 		}
-
-		sorts = append(sorts, qb.Sort{
-			Expr:      qb.F(resolvedField),
-			Direction: direction,
-		})
+		out[i] = resolved
 	}
-
-	return sorts, nil
+	return out, nil
 }
 
-func parseNames(node any, path string) ([]string, error) {
-	items, err := asStringList(node, path)
-	if err != nil {
-		return nil, err
+func resolveSortScalar(expr qb.Scalar, opts options, path string) (qb.Scalar, error) {
+	if opts.sortFieldResolver == nil {
+		return expr, nil
 	}
-
-	names := make([]string, 0, len(items))
-	for _, item := range items {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
+	return qb.RewriteScalar(expr, func(node qb.Scalar) (qb.Scalar, error) {
+		ref, ok := node.(qb.Ref)
+		if !ok {
+			return node, nil
 		}
-		names = append(names, item)
-	}
+		resolved, err := opts.sortFieldResolver(ref.Name)
+		if err != nil {
+			return nil, parseError(
+				err,
+				qb.CodeUnknownField,
+				qb.WithPath(path),
+				qb.WithField(ref.Name),
+			)
+		}
+		if strings.TrimSpace(resolved) == "" {
+			return nil, parseError(
+				fmt.Errorf("sort field resolver returned an empty field"),
+				qb.CodeInvalidInput,
+				qb.WithPath(path),
+				qb.WithField(ref.Name),
+			)
+		}
+		return qb.F(resolved), nil
+	})
+}
 
-	return names, nil
+func resolveSortScalars(values []qb.Scalar, opts options, path string) ([]qb.Scalar, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	out := make([]qb.Scalar, len(values))
+	for i, expr := range values {
+		resolved, err := resolveSortScalar(expr, opts, fmt.Sprintf("%s[%d]", path, i))
+		if err != nil {
+			return nil, err
+		}
+		out[i] = resolved
+	}
+	return out, nil
+}
+
+func parseSimpleFieldList(value string, path string) ([]string, error) {
+	items := splitCSV(value)
+	out := make([]string, 0, len(items))
+	for i, item := range items {
+		if !isSimpleFieldRef(item) {
+			return nil, parseError(
+				fmt.Errorf("simple list shorthand only supports field references"),
+				qb.CodeInvalidInput,
+				qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+			)
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func parseDelimitedStrings(node any, path string) ([]string, error) {
+	switch typed := node.(type) {
+	case string:
+		return splitCSV(typed), nil
+	case []any:
+		out := make([]string, 0, len(typed))
+		for i, item := range typed {
+			value, ok := item.(string)
+			if !ok {
+				return nil, parseError(
+					fmt.Errorf("expected string, got %T", item),
+					qb.CodeInvalidInput,
+					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+				)
+			}
+			out = append(out, splitCSV(value)...)
+		}
+		return out, nil
+	default:
+		return nil, parseError(
+			fmt.Errorf("expected string or list, got %T", node),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
+	}
 }
 
 func parseCursor(node any, path string) (*qb.Cursor, error) {
@@ -541,20 +906,10 @@ func parseCursor(node any, path string) (*qb.Cursor, error) {
 			)
 		}
 		return &qb.Cursor{Token: typed}, nil
-	case json.Number:
-		return &qb.Cursor{Token: typed.String()}, nil
-	case bool:
-		return &qb.Cursor{Token: strconv.FormatBool(typed)}, nil
-	case int:
-		return &qb.Cursor{Token: strconv.Itoa(typed)}, nil
-	case int64:
-		return &qb.Cursor{Token: strconv.FormatInt(typed, 10)}, nil
-	case float64:
-		return &qb.Cursor{Token: strconv.FormatFloat(typed, 'f', -1, 64)}, nil
 	case map[string]any:
 		cursor := qb.Cursor{Values: make(map[string]any, len(typed))}
 		for key, value := range typed {
-			cursor.Values[key] = normalizeJSONNumber(value)
+			cursor.Values[key] = normalizeValue(value)
 		}
 		return &cursor, nil
 	default:
@@ -564,6 +919,72 @@ func parseCursor(node any, path string) (*qb.Cursor, error) {
 			qb.WithPath(path),
 		)
 	}
+}
+
+func predicatePrimaryField(expr qb.Scalar) string {
+	field, ok := qb.SingleRef(expr)
+	if !ok {
+		return ""
+	}
+	return field
+}
+
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
+}
+
+func isSimpleFieldRef(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, part := range strings.Split(value, ".") {
+		if part == "" {
+			return false
+		}
+		for i, r := range part {
+			if i == 0 {
+				if !isIdentStart(r) {
+					return false
+				}
+				continue
+			}
+			if !isIdentContinue(r) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isMixedDSLString(value string) bool {
+	return strings.Contains(value, "@") || strings.Contains(value, "(") || strings.Contains(value, "::") || strings.Contains(value, "'")
+}
+
+func validateUnaryPredicateOperand(value any, path string) error {
+	switch typed := normalizeValue(value).(type) {
+	case bool:
+		if typed {
+			return nil
+		}
+	case string:
+		if strings.EqualFold(strings.TrimSpace(typed), "true") {
+			return nil
+		}
+	}
+	return parseError(
+		fmt.Errorf("unary null operators require true as the operand"),
+		qb.CodeInvalidInput,
+		qb.WithPath(path),
+	)
 }
 
 func parseInteger(value any, path string) (int, error) {
@@ -628,7 +1049,7 @@ func parseInteger(value any, path string) (int, error) {
 }
 
 func decodeValue(field string, op qb.Operator, value any, opts options, path string) (any, error) {
-	value = normalizeJSONNumber(value)
+	value = normalizeValue(value)
 	if opts.valueDecoder == nil {
 		return value, nil
 	}
@@ -646,176 +1067,55 @@ func decodeValue(field string, op qb.Operator, value any, opts options, path str
 	return decoded, nil
 }
 
-func resolveFilterField(field string, op qb.Operator, opts options, path string) (string, error) {
-	if opts.filterFieldResolver == nil {
-		return field, nil
-	}
-
-	resolvedField, err := opts.filterFieldResolver(field, op)
-	if err != nil {
-		return "", parseError(
-			err,
-			qb.CodeUnknownField,
-			qb.WithPath(path),
-			qb.WithField(field),
-			qb.WithOperator(op),
-		)
-	}
-	if resolvedField == "" {
-		return "", parseError(
-			fmt.Errorf("filter field resolver returned an empty field"),
-			qb.CodeInvalidInput,
-			qb.WithPath(path),
-			qb.WithField(field),
-			qb.WithOperator(op),
-		)
-	}
-	return resolvedField, nil
-}
-
-func resolveSortField(field string, opts options) (string, error) {
-	if opts.sortFieldResolver == nil {
-		return field, nil
-	}
-
-	resolvedField, err := opts.sortFieldResolver(field)
-	if err != nil {
-		return "", parseError(
-			err,
-			qb.CodeUnknownField,
-			qb.WithPath("sort"),
-			qb.WithField(field),
-		)
-	}
-	if resolvedField == "" {
-		return "", parseError(
-			fmt.Errorf("sort field resolver returned an empty field"),
-			qb.CodeInvalidInput,
-			qb.WithPath("sort"),
-			qb.WithField(field),
-		)
-	}
-	return resolvedField, nil
-}
-
-func decodeListFromNode(field string, op qb.Operator, node any, opts options, path string) ([]any, error) {
-	values, err := asList(node, path)
-	if err != nil {
-		return nil, parseError(
-			err,
-			qb.CodeInvalidInput,
-			qb.WithPath(path),
-			qb.WithField(field),
-			qb.WithOperator(op),
-		)
-	}
-	return decodeList(field, op, values, opts, path)
-}
-
-func decodeList(field string, op qb.Operator, values []any, opts options, path string) ([]any, error) {
-	decoded := make([]any, 0, len(values))
-	for i, value := range values {
-		item, err := decodeValue(field, op, value, opts, fmt.Sprintf("%s[%d]", path, i))
-		if err != nil {
-			return nil, err
-		}
-		decoded = append(decoded, item)
-	}
-	return decoded, nil
-}
-
 func asList(value any, path string) ([]any, error) {
 	switch typed := value.(type) {
 	case []any:
 		return typed, nil
 	case string:
-		items := strings.Split(typed, ",")
-		list := make([]any, 0, len(items))
-		for _, item := range items {
-			item = strings.TrimSpace(item)
-			if item == "" {
-				continue
-			}
-			list = append(list, item)
+		items := splitCSV(typed)
+		out := make([]any, len(items))
+		for i, item := range items {
+			out[i] = item
 		}
-		return list, nil
+		return out, nil
 	default:
 		return nil, fmt.Errorf("expected list, got %T", value)
 	}
 }
 
-func asStringList(value any, path string) ([]string, error) {
-	switch typed := value.(type) {
-	case string:
-		items := strings.Split(typed, ",")
-		out := make([]string, 0, len(items))
-		for _, item := range items {
-			item = strings.TrimSpace(item)
-			if item == "" {
-				continue
-			}
-			out = append(out, item)
-		}
-		return out, nil
-	case []any:
-		out := make([]string, 0, len(typed))
-		for i, item := range typed {
-			switch value := item.(type) {
-			case string:
-				for _, part := range strings.Split(value, ",") {
-					part = strings.TrimSpace(part)
-					if part == "" {
-						continue
-					}
-					out = append(out, part)
-				}
-			default:
-				return nil, parseError(
-					fmt.Errorf("expected string, got %T", item),
-					qb.CodeInvalidInput,
-					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
-				)
-			}
-		}
-		return out, nil
-	default:
-		return nil, parseError(
-			fmt.Errorf("expected string or list, got %T", value),
-			qb.CodeInvalidInput,
-			qb.WithPath(path),
-		)
+func normalizeObject(input map[string]any) map[string]any {
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = normalizeValue(value)
 	}
+	return out
 }
 
-func normalizeJSONNumber(value any) any {
-	number, ok := value.(json.Number)
-	if !ok {
+func normalizeValue(value any) any {
+	switch typed := value.(type) {
+	case json.Number:
+		return normalizeJSONNumber(typed)
+	case map[string]any:
+		return normalizeObject(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = normalizeValue(item)
+		}
+		return out
+	default:
 		return value
 	}
-
-	if integer, err := number.Int64(); err == nil {
-		return integer
-	}
-
-	if floatValue, err := number.Float64(); err == nil {
-		return floatValue
-	}
-
-	return value
 }
 
-func pickObject(input map[string]any, keys ...string) (map[string]any, bool) {
-	for _, key := range keys {
-		value, ok := input[key]
-		if !ok || value == nil {
-			continue
-		}
-		object, ok := value.(map[string]any)
-		if ok {
-			return object, true
-		}
+func normalizeJSONNumber(value json.Number) any {
+	if integer, err := value.Int64(); err == nil {
+		return integer
 	}
-	return nil, false
+	if floatValue, err := value.Float64(); err == nil {
+		return floatValue
+	}
+	return value
 }
 
 func pickValue(input map[string]any, key string) (any, bool) {
@@ -824,29 +1124,6 @@ func pickValue(input map[string]any, key string) (any, bool) {
 		return nil, false
 	}
 	return value, true
-}
-
-func pickExclusiveValue(input map[string]any, keys ...string) (string, any, bool, error) {
-	var (
-		foundKey string
-		found    any
-		ok       bool
-	)
-
-	for _, key := range keys {
-		value, exists := pickValue(input, key)
-		if !exists {
-			continue
-		}
-		if ok {
-			return "", nil, false, fmt.Errorf("only one of %s may be provided", strings.Join(keys, ", "))
-		}
-		foundKey = key
-		found = value
-		ok = true
-	}
-
-	return foundKey, found, ok, nil
 }
 
 func sortedKeys(values map[string]any) []string {

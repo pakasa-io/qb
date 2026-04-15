@@ -234,6 +234,7 @@ func TestCompileCommonFunctionHelpersAcrossDialects(t *testing.T) {
 			qb.F("users.name").LTrim(),
 			qb.F("users.name").RTrim(),
 			qb.F("users.score").Mod(10),
+			qb.F("users.amount").RoundDouble(2),
 			qb.F("users.code").Left(3),
 			qb.F("users.code").Right(2),
 			qb.CurrentDate(),
@@ -255,21 +256,21 @@ func TestCompileCommonFunctionHelpersAcrossDialects(t *testing.T) {
 		{
 			name:    "postgres",
 			dialect: sqladapter.PostgresDialect{},
-			wantSQL: `SELECT COUNT(*), SUM("users"."amount"), AVG("users"."rating"), MIN("users"."age"), MAX("users"."age"), LTRIM("users"."name"), RTRIM("users"."name"), ("users"."score" % $1), LEFT("users"."code", $2), RIGHT("users"."code", $3), CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP, JSON_QUERY("users"."profile", $4), JSON_VALUE("users"."profile", $5)`,
+			wantSQL: `SELECT COUNT(*), SUM("users"."amount"), AVG("users"."rating"), MIN("users"."age"), MAX("users"."age"), LTRIM("users"."name"), RTRIM("users"."name"), ("users"."score" % $1), CAST(ROUND(CAST("users"."amount" AS NUMERIC), $2) AS DOUBLE PRECISION), LEFT("users"."code", $3), RIGHT("users"."code", $4), CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP, JSON_QUERY("users"."profile", $5), JSON_VALUE("users"."profile", $6)`,
 		},
 		{
 			name:    "mysql",
 			dialect: sqladapter.MySQLDialect{},
-			wantSQL: "SELECT COUNT(*), SUM(`users`.`amount`), AVG(`users`.`rating`), MIN(`users`.`age`), MAX(`users`.`age`), LTRIM(`users`.`name`), RTRIM(`users`.`name`), (`users`.`score` % ?), LEFT(`users`.`code`, ?), RIGHT(`users`.`code`, ?), CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP, JSON_EXTRACT(`users`.`profile`, ?), JSON_VALUE(`users`.`profile`, ?)",
+			wantSQL: "SELECT COUNT(*), SUM(`users`.`amount`), AVG(`users`.`rating`), MIN(`users`.`age`), MAX(`users`.`age`), LTRIM(`users`.`name`), RTRIM(`users`.`name`), (`users`.`score` % ?), ROUND(`users`.`amount`, ?), LEFT(`users`.`code`, ?), RIGHT(`users`.`code`, ?), CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP, JSON_EXTRACT(`users`.`profile`, ?), JSON_VALUE(`users`.`profile`, ?)",
 		},
 		{
 			name:    "sqlite",
 			dialect: sqladapter.SQLiteDialect{},
-			wantSQL: `SELECT COUNT(*), SUM("users"."amount"), AVG("users"."rating"), MIN("users"."age"), MAX("users"."age"), LTRIM("users"."name"), RTRIM("users"."name"), ("users"."score" % ?), SUBSTR("users"."code", 1, ?), SUBSTR("users"."code", -?), CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP, json_extract("users"."profile", ?), json_extract("users"."profile", ?)`,
+			wantSQL: `SELECT COUNT(*), SUM("users"."amount"), AVG("users"."rating"), MIN("users"."age"), MAX("users"."age"), LTRIM("users"."name"), RTRIM("users"."name"), ("users"."score" % ?), ROUND("users"."amount", ?), SUBSTR("users"."code", 1, ?), SUBSTR("users"."code", -?), CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP, json_extract("users"."profile", ?), json_extract("users"."profile", ?)`,
 		},
 	}
 
-	wantArgs := []any{10, 3, 2, "$.nickname", "$.nickname"}
+	wantArgs := []any{10, 2, 3, 2, "$.nickname", "$.nickname"}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

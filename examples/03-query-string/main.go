@@ -10,14 +10,18 @@ import (
 
 func main() {
 	values := url.Values{
-		"pick":                     {"id,status"},
-		"where[status][$eq]":       {"active"},
-		"where[age][$gte]":         {"21"},
-		"where[$or][0][role][$eq]": {"admin"},
-		"where[$or][1][role][$eq]": {"owner"},
-		"sort":                     {"-created_at,name"},
-		"page":                     {"2"},
-		"size":                     {"10"},
+		"$select[0]":            {"users.id"},
+		"$select[1]":            {"lower(users.name) as normalized_name"},
+		"$where[status]":        {"active"},
+		"$where[age][$gte]":     {"21"},
+		"$where[$or][0][role]":  {"admin"},
+		"$where[$or][1][role]":  {"owner"},
+		"$where[$expr][$eq][0]": {"lower(@users.name)"},
+		"$where[$expr][$eq][1]": {"lower('john')"},
+		"$sort[0]":              {"lower(users.name) asc"},
+		"$sort[1]":              {"created_at desc"},
+		"$page":                 {"2"},
+		"$size":                 {"10"},
 	}
 
 	query, err := querystring.Parse(values)

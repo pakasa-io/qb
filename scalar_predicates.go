@@ -59,3 +59,20 @@ func (c Call) In(values ...any) Expr    { return compareList(c, OpIn, values...)
 func (c Call) NotIn(values ...any) Expr { return compareList(c, OpNotIn, values...) }
 func (c Call) IsNull() Expr             { return Predicate{Left: CloneScalar(c), Op: OpIsNull} }
 func (c Call) NotNull() Expr            { return Predicate{Left: CloneScalar(c), Op: OpNotNull} }
+
+func (c Cast) Eq(value any) Expr        { return compareScalar(c, OpEq, value) }
+func (c Cast) Ne(value any) Expr        { return compareScalar(c, OpNe, value) }
+func (c Cast) Gt(value any) Expr        { return compareScalar(c, OpGt, value) }
+func (c Cast) Gte(value any) Expr       { return compareScalar(c, OpGte, value) }
+func (c Cast) Lt(value any) Expr        { return compareScalar(c, OpLt, value) }
+func (c Cast) Lte(value any) Expr       { return compareScalar(c, OpLte, value) }
+func (c Cast) Like(value any) Expr      { return compareScalar(c, OpLike, value) }
+func (c Cast) ILike(value any) Expr     { return compareScalar(c, OpILike, value) }
+func (c Cast) Regexp(value any) Expr    { return compareScalar(c, OpRegexp, value) }
+func (c Cast) Contains(value any) Expr  { return compareScalar(c, OpContains, value) }
+func (c Cast) Prefix(value any) Expr    { return compareScalar(c, OpPrefix, value) }
+func (c Cast) Suffix(value any) Expr    { return compareScalar(c, OpSuffix, value) }
+func (c Cast) In(values ...any) Expr    { return compareList(c, OpIn, values...) }
+func (c Cast) NotIn(values ...any) Expr { return compareList(c, OpNotIn, values...) }
+func (c Cast) IsNull() Expr             { return Predicate{Left: CloneScalar(c), Op: OpIsNull} }
+func (c Cast) NotNull() Expr            { return Predicate{Left: CloneScalar(c), Op: OpNotNull} }

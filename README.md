@@ -2,273 +2,220 @@
 
 `qb` is a database-agnostic query builder core for Go.
 
-The package is built around one stable boundary: a semantic `qb.Query` AST.
-Parsers compile external inputs into `qb.Query`, and adapters compile `qb.Query`
-into storage-specific outputs. The core does not depend on parsers, adapters,
-ORMs, or HTTP frameworks.
+The package centers on a semantic `qb.Query` AST. Parsers turn external
+payloads into `qb.Query`, and adapters turn `qb.Query` into backend-specific
+output. The core stays independent from HTTP, JSON, YAML, SQL drivers, and
+ORMs.
 
-Core helpers now also include:
+## Package Layout
 
-- `qb.RewriteQuery` for AST-level rewrites
-- `qb.QueryTransformer` and `qb.ComposeTransformers` for shared pipelines
-- first-class scalar expressions via `qb.F`, `qb.V`, and `qb.Func`
-- first-class projections via `qb.Project(...)` and `expr.As("alias")`
-- structured `qb.Error` values for parse/normalize/rewrite/compile/apply failures
-- dialect function/operator capability metadata for early validation
+- `qb`: query AST, fluent builder, scalar expressions, projections, rewrites
+- `parser/mapinput`: parse normalized maps or JSON using the compact `$...` envelope
+- `parser/yamlinput`: parse YAML using the same semantics as `parser/mapinput`
+- `parser/querystring`: parse bracket-notation query strings using the same semantics
+- `schema`: optional aliasing, field policy, value decoding, and storage mapping
+- `adapter/sql`: compile to parameterized SQL with PostgreSQL, MySQL, and SQLite dialects
+- `adapter/gorm`: apply the same query AST to GORM chains
 
-## Goals
+See:
 
-- developer UX through a fluent builder and predictable input formats
-- extensibility through a small semantic core
-- testability through pure parsing/compilation steps
-- low coupling by keeping the core free of transport and ORM concerns
-
-## Package layout
-
-- `qb`: core AST and fluent builder
-- `adapter/gorm`: apply `qb.Query` to GORM chains without changing the core
-- `schema`: optional field policy layer for aliases, operator allowlists, and decoding
-- `parser/mapinput`: parse normalized maps or JSON documents
-- `parser/querystring`: parse bracket-notation query strings
-- `adapter/sql`: compile to parameterized SQL fragments with pluggable dialect registries and a shared renderer
-
-For runnable examples, see [examples/README.md](examples/README.md).
-For the long-form narrative guide, see [docs/EXAMPLES.md](docs/EXAMPLES.md).
+- [examples/README.md](examples/README.md) for runnable examples
+- [docs/EXAMPLES.md](docs/EXAMPLES.md) for a narrative guide
+- [docs/JSON_DSL_SPEC.md](docs/JSON_DSL_SPEC.md) for the canonical JSON spec
+- [docs/YAML_DSL_SPEC.md](docs/YAML_DSL_SPEC.md) for the semantically identical YAML spec
+- [docs/QUERYSTRING_DSL_SPEC.md](docs/QUERYSTRING_DSL_SPEC.md) for the semantically identical query-string spec
 
 `adapter/sql` defaults to PostgreSQL v17+ syntax. You can change the process-wide
-default at runtime with `sqladapter.SetDefaultDialect(...)` or override it for a
-single compiler with `sqladapter.WithDialect(...)`.
+default with `sqladapter.SetDefaultDialect(...)` or override it per compiler
+with `sqladapter.WithDialect(...)`.
 
-## Example
+## Core Example
 
 ```go
 query, err := qb.New().
-    Pick("id", "status").
-    Where(qb.And(
-        qb.Field("status").Eq("active"),
-        qb.Or(
-            qb.Field("role").Eq("admin"),
-            qb.Field("role").Eq("owner"),
-        ),
-    )).
-    SortBy("created_at", qb.Desc).
-    Page(2).
-    Size(20).
-    Query()
+	SelectProjection(
+		qb.F("users.id").As("id"),
+		qb.F("users.name").Lower().As("normalized_name"),
+	).
+	Where(qb.And(
+		qb.F("users.status").Eq("active"),
+		qb.F("users.age").Cast("double").Gte(18),
+	)).
+	SortByExpr(qb.F("users.name").Lower(), qb.Asc).
+	Page(2).
+	Size(20).
+	Query()
 if err != nil {
-    panic(err)
+	panic(err)
 }
 
 statement, err := sqladapter.New().Compile(query)
 if err != nil {
-    panic(err)
+	panic(err)
 }
 ```
 
-Function expressions are built from scalar expressions:
+## Compact JSON / Map Input
 
 ```go
-query, err := qb.New().
-    SelectExpr(qb.Lower(qb.F("users.name")), qb.F("users.age")).
-    Where(qb.Lower(qb.F("users.name")).Eq("john")).
-    Where(qb.F("users.name").Eq(qb.Lower("JOHN"))).
-    Query()
+payload := map[string]any{
+	"$select": []any{
+		"users.id",
+		"lower(users.name) as normalized_name",
+		"round(users.age::decimal, 2) as rounded_age",
+	},
+	"$where": map[string]any{
+		"status": "active",
+		"age":    map[string]any{"$gte": 18},
+		"$expr": map[string]any{
+			"$eq": []any{"lower(@users.name)", "lower('john')"},
+		},
+	},
+	"$group": []any{"lower(users.name)"},
+	"$sort":  []any{"lower(users.name) asc"},
+	"$page":  2,
+	"$size":  20,
+}
+
+query, err := mapinput.Parse(payload)
 ```
 
-Selected expressions are projections, so aliases are first-class:
+Canonical top-level keys are:
+
+- `$select`
+- `$include`
+- `$where`
+- `$group`
+- `$sort`
+- `$page`
+- `$size`
+- `$cursor`
+
+String shorthand is only for simple field lists and simple `-field` sorts. Once
+functions, casts, aliases, or explicit directions appear, arrays are the
+canonical form.
+
+## Query-String Input
 
 ```go
-query, err := qb.New().
-    SelectProjection(
-        qb.F("users.name").Lower().As("normalized_name"),
-        qb.F("users.age").As("age"),
-    ).
-    Query()
+values := url.Values{
+	"$select[0]":            {"users.id"},
+	"$select[1]":            {"lower(users.name) as normalized_name"},
+	"$where[status]":        {"active"},
+	"$where[age][$gte]":     {"18"},
+	"$where[$expr][$eq][0]": {"lower(@users.name)"},
+	"$where[$expr][$eq][1]": {"lower('john')"},
+	"$sort[0]":              {"lower(users.name) asc"},
+	"$page":                 {"2"},
+	"$size":                 {"20"},
+}
+
+query, err := querystring.Parse(values)
 ```
 
-Common helpers are available for portable SQL functions:
+## YAML Input
 
 ```go
-query, err := qb.New().
-    SelectExpr(
-        qb.F("users.name").Substring(1, 4),
-        qb.F("users.first_name").Concat(" ", qb.F("users.last_name")),
-        qb.F("users.nickname").Coalesce(qb.F("users.name")),
-        qb.F("users.balance").Abs(),
-    ).
-    Where(qb.F("users.email").Replace("@old.com", "@new.com").Eq("john@new.com")).
-    Query()
+payload := []byte(`
+$select:
+  - users.id
+  - "lower(users.name) as normalized_name"
+$where:
+  status: active
+  age:
+    $gte: 18
+$sort:
+  - "lower(users.name) asc"
+$page: 2
+$size: 20
+`)
+
+query, err := yamlinput.Parse(payload)
 ```
 
-PostgreSQL-first helpers are also available for date/time and richer JSON usage:
-
-```go
-query, err := qb.New().
-    SelectExpr(
-        qb.F("users.created_at").DateTrunc("day"),
-        qb.F("users.created_at").Extract("year"),
-        qb.F("users.profile").JsonQuery("$.address"),
-        qb.F("users.profile").JsonExists("$.address"),
-        qb.F("users.profile").JsonArrayLength("$.tags"),
-        qb.JsonObject("id", qb.F("users.id"), "name", qb.F("users.name")),
-        qb.Now(),
-    ).
-    Query()
-```
-
-## Schema-driven usage
+## Schema-Driven Usage
 
 ```go
 userSchema := schema.MustNew(
-    schema.Define("status", schema.Storage("users.status"), schema.Aliases("state")),
-    schema.Define(
-        "age",
-        schema.Storage("users.age"),
-        schema.Operators(qb.OpEq, qb.OpGte, qb.OpLte),
-        schema.Decode(func(_ qb.Operator, value any) (any, error) {
-            switch typed := value.(type) {
-            case string:
-                return strconv.Atoi(typed)
-            default:
-                return value, nil
-            }
-        }),
-    ),
-    schema.Define("created_at", schema.Storage("users.created_at"), schema.Aliases("createdAt"), schema.Sortable()),
+	schema.Define("status", schema.Storage("users.status"), schema.Aliases("state"), schema.Sortable()),
+	schema.Define(
+		"age",
+		schema.Storage("users.age"),
+		schema.Aliases("minAge"),
+		schema.Operators(qb.OpEq, qb.OpGte, qb.OpLte),
+		schema.Decode(func(_ qb.Operator, value any) (any, error) {
+			switch typed := value.(type) {
+			case string:
+				return strconv.Atoi(typed)
+			default:
+				return value, nil
+			}
+		}),
+	),
+	schema.Define("created_at", schema.Storage("users.created_at"), schema.Aliases("createdAt"), schema.Sortable()),
 )
 
 query, err := mapinput.Parse(
-    payload,
-    mapinput.WithFilterFieldResolver(userSchema.ResolveFilterField),
-    mapinput.WithSortFieldResolver(userSchema.ResolveSortField),
-    mapinput.WithValueDecoder(userSchema.DecodeValue),
+	map[string]any{
+		"$select": "state",
+		"$where": map[string]any{
+			"state":  "active",
+			"minAge": map[string]any{"$gte": "21"},
+		},
+		"$sort": "-createdAt",
+	},
+	mapinput.WithFilterFieldResolver(userSchema.ResolveFilterField),
+	mapinput.WithGroupFieldResolver(userSchema.ResolveGroupField),
+	mapinput.WithSortFieldResolver(userSchema.ResolveSortField),
+	mapinput.WithValueDecoder(userSchema.DecodeValue),
 )
 if err != nil {
-    panic(err)
+	panic(err)
 }
 
 statement, err := sqladapter.New(
-    sqladapter.WithQueryTransformer(userSchema.ToStorage),
+	sqladapter.WithQueryTransformer(userSchema.ToStorage),
 ).Compile(query)
 if err != nil {
-    panic(err)
+	panic(err)
 }
 ```
 
-For GORM:
+Use `userSchema.Normalize` when you only want canonical API-facing field names
+and decoded values. Use `userSchema.ToStorage` when adapters should see
+storage-facing names like `users.created_at`. Structured cursor payloads are
+normalized and storage-projected through the same schema layer.
+
+## Function Expressions
+
+All scalar contexts share one expression model: projections, predicates,
+grouping, sorting, and function arguments.
 
 ```go
-tx := db.Model(&User{}).Scopes(
-    gormadapter.New(
-        gormadapter.WithQueryTransformer(userSchema.ToStorage),
-    ).Scope(query),
-)
+query, err := qb.New().
+	SelectProjection(
+		qb.F("users.name").Lower().As("normalized_name"),
+		qb.Round(qb.F("users.age").Cast("decimal"), 2).As("rounded_age"),
+		qb.RoundDouble(qb.F("users.score").Cast("double"), 2).As("rounded_score"),
+	).
+	Where(qb.And(
+		qb.F("users.name").Lower().Eq("john"),
+		qb.Func("substring", qb.F("users.name"), 1, 4).Eq("john"),
+	)).
+	GroupByExpr(qb.F("users.name").Lower()).
+	SortByExpr(qb.F("users.name").Lower(), qb.Asc).
+	Query()
 ```
 
-If you only want canonical API-facing names and decoded values, use `userSchema.Normalize`.
-If you want adapter-facing storage names as well, use `userSchema.ToStorage`.
-
-For structured input:
-
-```json
-{
-  "pick": ["id", "status"],
-  "where": {
-    "status": "active",
-    "age": { "$gte": 18 },
-    "$or": [
-      { "role": "admin" },
-      { "role": "owner" }
-    ]
-  },
-  "group_by": ["id", "status"],
-  "sort": ["-created_at", "name"],
-  "page": 2,
-  "size": 20
-}
-```
+`qb` includes helpers for common string, numeric, aggregate, date/time, JSON,
+and PostgreSQL-first functions. Use `Round(..., scale)` with `decimal`/`numeric`
+inputs for portable scaled rounding. Use `RoundDouble(..., scale)` when you
+explicitly want a PostgreSQL-safe double-precision rounding helper. Unsupported
+helpers fail with structured `unsupported_function` errors for dialects that
+cannot render them cleanly.
 
 ## Development
 
 ```bash
 go test ./...
 ```
-
-## Input spec
-
-Structured input supports these top-level constructs:
-
-- `select` or `pick`: comma-delimited string, array of projected fields, or structured projection objects with `$expr` and optional `$as`
-- `include`: comma-delimited string or array of eager-load/include paths
-- `where` or `filter`: nested filter object
-- `sort`: comma-delimited string or array such as `["-created_at", "name"]`
-- `group_by`: comma-delimited string, array of grouping fields, or scalar expression objects
-- `page`: 1-based page number for offset pagination
-- `size`: page size for both offset and cursor pagination
-- `cursor`: opaque token string or object payload for cursor pagination
-- `limit` and `offset`: accepted for backward compatibility, but `page` and `size` are preferred
-
-Canonical structured projections use expression objects:
-
-```json
-{
-  "select": [
-    {
-      "$as": "normalized_name",
-      "$expr": {
-        "$call": "lower",
-        "args": [
-          { "$field": "users.name" }
-        ]
-      }
-    },
-    "users.age"
-  ],
-  "group_by": [
-    {
-      "$call": "lower",
-      "args": [
-        { "$field": "users.name" }
-      ]
-    }
-  ]
-}
-```
-
-Supported scalar expression constructs inside structured projections and grouping:
-
-- `$field`: field reference
-- `$call`: function name with `args`
-- `$value`: explicit literal value
-- `$expr`: wrapper used when a projection also needs `$as`
-
-Supported filter operators:
-
-- `$eq`, `$ne`
-- `$gt`, `$gte`, `$lt`, `$lte`
-- `$in`, `$nin`
-- `$like`, `$contains`, `$prefix`, `$suffix`
-- `$isnull`, `$notnull`
-- `$and`, `$or`, `$not`
-
-Cursor notes:
-
-- `cursor` is metadata in the core query model.
-- built-in adapters do not interpret it directly
-- use a `qb.QueryTransformer` to rewrite cursor metadata into filters and sorts before `adapter/sql` or `adapter/gorm`
-- `cursor` requires `size`
-
-## Design notes
-
-- The core model intentionally omits joins, table metadata, and ORM concepts.
-- `schema` separates public query field names from storage-facing identifiers.
-- `Normalize` validates aliases, operator allowlists, and value decoding for both parsed and builder-created queries.
-- `ToStorage` projects canonical fields into storage identifiers before adapter compilation.
-- `qb.RewriteQuery` is the low-level AST transform primitive used by schema and can be reused for tenant filters or soft-delete policies.
-- `parser/querystring` normalizes bracket-notation input and delegates to `parser/mapinput`.
-- `select`, `include`, and `group_by` are first-class query metadata, but relation joins themselves still stay outside the core.
-- `page` and `size` are the preferred pagination inputs; `size` is also used for cursor pagination.
-- Adapters depend only on `qb.Query`, so a GORM adapter can be added without changing the core.
-- `adapter/gorm` uses the same query-transform pattern as `adapter/sql`, so schema rules can be reused.
-- Parser and adapter interfaces are not forced into the core; the query model itself is the extension point.
-- `schema` is optional and lives outside the core so policy rules stay composable instead of hard-coded.

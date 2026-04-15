@@ -113,6 +113,20 @@ func modCompiler() FunctionCompiler {
 	}
 }
 
+func roundDoubleCompiler(dialect string) FunctionCompiler {
+	return func(args []string) (string, error) {
+		if len(args) != 2 {
+			return "", fmt.Errorf("function %q expects exactly two arguments", "round_double")
+		}
+		switch dialect {
+		case "postgres":
+			return "CAST(ROUND(CAST(" + args[0] + " AS NUMERIC), " + args[1] + ") AS DOUBLE PRECISION)", nil
+		default:
+			return "ROUND(" + strings.Join(args, ", ") + ")", nil
+		}
+	}
+}
+
 func leftCompiler(dialect string) FunctionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 2 {
@@ -270,5 +284,80 @@ func regexOp(sql string) PredicateCompiler {
 func regexLikeMySQL() PredicateCompiler {
 	return func(left string, right string) (string, error) {
 		return "REGEXP_LIKE(" + left + ", " + right + ")", nil
+	}
+}
+
+func castCompiler(dialect string) CastCompiler {
+	return func(expr string, typeName string) (string, error) {
+		typeName = strings.ToLower(strings.TrimSpace(typeName))
+		if expr == "" {
+			return "", fmt.Errorf("cast expression cannot be empty")
+		}
+
+		switch dialect {
+		case "postgres":
+			switch typeName {
+			case "string":
+				return "CAST(" + expr + " AS TEXT)", nil
+			case "int":
+				return "CAST(" + expr + " AS INTEGER)", nil
+			case "bigint":
+				return "CAST(" + expr + " AS BIGINT)", nil
+			case "double":
+				return "CAST(" + expr + " AS DOUBLE PRECISION)", nil
+			case "decimal":
+				return "CAST(" + expr + " AS NUMERIC)", nil
+			case "bool":
+				return "CAST(" + expr + " AS BOOLEAN)", nil
+			case "date":
+				return "CAST(" + expr + " AS DATE)", nil
+			case "timestamp":
+				return "CAST(" + expr + " AS TIMESTAMP)", nil
+			case "json":
+				return "CAST(" + expr + " AS JSONB)", nil
+			}
+		case "mysql":
+			switch typeName {
+			case "string":
+				return "CAST(" + expr + " AS CHAR)", nil
+			case "int":
+				return "CAST(" + expr + " AS SIGNED)", nil
+			case "bigint":
+				return "CAST(" + expr + " AS SIGNED)", nil
+			case "double":
+				return "CAST(" + expr + " AS DOUBLE)", nil
+			case "decimal":
+				return "CAST(" + expr + " AS DECIMAL(65,30))", nil
+			case "bool":
+				return "CAST(" + expr + " AS SIGNED)", nil
+			case "date":
+				return "CAST(" + expr + " AS DATE)", nil
+			case "timestamp":
+				return "CAST(" + expr + " AS DATETIME)", nil
+			case "json":
+				return "CAST(" + expr + " AS JSON)", nil
+			}
+		case "sqlite":
+			switch typeName {
+			case "string":
+				return "CAST(" + expr + " AS TEXT)", nil
+			case "int", "bigint":
+				return "CAST(" + expr + " AS INTEGER)", nil
+			case "double":
+				return "CAST(" + expr + " AS REAL)", nil
+			case "decimal":
+				return "CAST(" + expr + " AS NUMERIC)", nil
+			case "bool":
+				return "CAST(" + expr + " AS INTEGER)", nil
+			case "date":
+				return "DATE(" + expr + ")", nil
+			case "timestamp":
+				return "DATETIME(" + expr + ")", nil
+			case "json":
+				return "CAST(" + expr + " AS TEXT)", nil
+			}
+		}
+
+		return "", fmt.Errorf("unsupported cast type %q for dialect %q", typeName, dialect)
 	}
 }

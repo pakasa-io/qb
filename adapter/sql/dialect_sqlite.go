@@ -27,6 +27,7 @@ func (SQLiteDialect) spec() registeredDialect {
 		"floor":             floorCompiler("sqlite"),
 		"mod":               modCompiler(),
 		"round":             arityRange("round", "ROUND", 1, 2),
+		"round_double":      roundDoubleCompiler("sqlite"),
 		"left":              leftCompiler("sqlite"),
 		"right":             rightCompiler("sqlite"),
 		"date":              exactArity("date", "DATE", 1),
@@ -60,6 +61,7 @@ func (SQLiteDialect) spec() registeredDialect {
 		quote:              `"`,
 		placeholder:        func(int) string { return "?" },
 		functions:          functions,
+		cast:               castCompiler("sqlite"),
 		predicateCompilers: map[qb.Operator]PredicateCompiler{},
 		capabilities:       newCapabilities(functions, operators...),
 	}
@@ -72,6 +74,9 @@ func (d SQLiteDialect) QuoteIdentifier(identifier string) string {
 func (d SQLiteDialect) Placeholder(index int) string { return d.spec().Placeholder(index) }
 func (d SQLiteDialect) CompileFunction(name string, args []string) (string, error) {
 	return d.spec().CompileFunction(name, args)
+}
+func (d SQLiteDialect) CompileCast(expr string, typeName string) (string, error) {
+	return d.spec().CompileCast(expr, typeName)
 }
 func (d SQLiteDialect) CompilePredicate(op qb.Operator, left string, right string) (string, bool, error) {
 	return d.spec().CompilePredicate(op, left, right)

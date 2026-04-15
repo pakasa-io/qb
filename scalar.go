@@ -27,9 +27,16 @@ type Call struct {
 	Args []Scalar
 }
 
+// Cast converts a scalar expression to a canonical logical type.
+type Cast struct {
+	Expr Scalar
+	Type string
+}
+
 func (Ref) scalarNode()     {}
 func (Literal) scalarNode() {}
 func (Call) scalarNode()    {}
+func (Cast) scalarNode()    {}
 
 // Operand is the right-hand side of a predicate.
 type Operand interface {
@@ -97,6 +104,8 @@ func AsScalar(value any) (Scalar, bool) {
 		return typed, true
 	case Call:
 		return typed, true
+	case Cast:
+		return typed, true
 	default:
 		return nil, false
 	}
@@ -120,6 +129,11 @@ func CloneScalar(expr Scalar) Scalar {
 			clone.Args[i] = CloneScalar(arg)
 		}
 		return clone
+	case Cast:
+		return Cast{
+			Expr: CloneScalar(typed.Expr),
+			Type: typed.Type,
+		}
 	default:
 		return typed
 	}
@@ -142,6 +156,8 @@ func WalkScalar(expr Scalar, visit func(Scalar) error) error {
 				return err
 			}
 		}
+	case Cast:
+		return WalkScalar(typed.Expr, visit)
 	}
 
 	return nil
@@ -172,6 +188,15 @@ func RewriteScalar(expr Scalar, rewriter func(Scalar) (Scalar, error)) (Scalar, 
 			rewritten.Args[i] = child
 		}
 		return rewriter(rewritten)
+	case Cast:
+		child, err := RewriteScalar(typed.Expr, rewriter)
+		if err != nil {
+			return nil, err
+		}
+		return rewriter(Cast{
+			Expr: child,
+			Type: typed.Type,
+		})
 	default:
 		return rewriter(expr)
 	}

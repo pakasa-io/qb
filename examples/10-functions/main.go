@@ -14,6 +14,8 @@ func main() {
 			qb.F("users.name").Substring(1, 4),
 			qb.F("users.first_name").Concat(" ", qb.F("users.last_name")),
 			qb.F("users.nickname").Coalesce(qb.F("users.name")),
+			qb.Round(qb.F("users.amount").Cast("decimal"), 2),
+			qb.RoundDouble(qb.F("users.score").Cast("double"), 2),
 			qb.F("users.created_at").DateTrunc("day"),
 			qb.F("users.profile").JsonValue("$.nickname"),
 			qb.Now(),

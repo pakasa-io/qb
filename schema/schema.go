@@ -232,6 +232,36 @@ func (s Schema) ResolveSortField(field string) (string, error) {
 	return spec.name, nil
 }
 
+// ResolveGroupField resolves a field alias to its canonical API-facing identifier
+// for grouping contexts.
+func (s Schema) ResolveGroupField(field string) (string, error) {
+	spec, err := s.lookup(field)
+	if err != nil {
+		return "", qb.WrapError(
+			err,
+			qb.WithCode(qb.CodeUnknownField),
+			qb.WithField(field),
+		)
+	}
+
+	return spec.name, nil
+}
+
+// ResolveCursorField resolves a structured cursor field alias to its canonical
+// API-facing identifier.
+func (s Schema) ResolveCursorField(field string) (string, error) {
+	spec, err := s.lookup(field)
+	if err != nil {
+		return "", qb.WrapError(
+			err,
+			qb.WithCode(qb.CodeUnknownField),
+			qb.WithField(field),
+		)
+	}
+
+	return spec.name, nil
+}
+
 // ResolveStorageField resolves a field alias to its storage-facing identifier.
 func (s Schema) ResolveStorageField(field string) (string, error) {
 	spec, err := s.lookup(field)
@@ -353,6 +383,12 @@ func (s Schema) Normalize(query qb.Query) (qb.Query, error) {
 	}
 	normalized.GroupBy = groupBy
 
+	cursor, err := s.normalizeCursor(normalized.Cursor)
+	if err != nil {
+		return qb.Query{}, err
+	}
+	normalized.Cursor = cursor
+
 	if _, _, err := normalized.ResolvedPagination(); err != nil {
 		return qb.Query{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageNormalize))
 	}
@@ -416,6 +452,12 @@ func (s Schema) ToStorage(query qb.Query) (qb.Query, error) {
 		return qb.Query{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageRewrite))
 	}
 	projected.GroupBy = groupBy
+
+	cursor, err := s.projectCursor(projected.Cursor)
+	if err != nil {
+		return qb.Query{}, err
+	}
+	projected.Cursor = cursor
 
 	return projected, nil
 }
@@ -535,6 +577,53 @@ func (s Schema) normalizeRightScalar(expr qb.Scalar, field string, op qb.Operato
 	})
 }
 
+func (s Schema) normalizeCursor(cursor *qb.Cursor) (*qb.Cursor, error) {
+	if cursor == nil {
+		return nil, nil
+	}
+
+	clone := cursor.Clone()
+	if len(clone.Values) == 0 {
+		return &clone, nil
+	}
+
+	values := make(map[string]any, len(clone.Values))
+	for key, value := range clone.Values {
+		resolved, err := s.ResolveCursorField(key)
+		if err != nil {
+			return nil, qb.WrapError(
+				err,
+				qb.WithStage(qb.StageNormalize),
+				qb.WithField(key),
+			)
+		}
+
+		if _, exists := values[resolved]; exists {
+			return nil, qb.NewError(
+				fmt.Errorf("duplicate cursor field %q after normalization", resolved),
+				qb.WithStage(qb.StageNormalize),
+				qb.WithCode(qb.CodeInvalidQuery),
+				qb.WithField(resolved),
+			)
+		}
+
+		decoded, err := s.DecodeValue(resolved, qb.OpEq, value)
+		if err != nil {
+			return nil, qb.WrapError(
+				err,
+				qb.WithStage(qb.StageNormalize),
+				qb.WithField(resolved),
+				qb.WithOperator(qb.OpEq),
+			)
+		}
+
+		values[resolved] = decoded
+	}
+
+	clone.Values = values
+	return &clone, nil
+}
+
 func (s Schema) projectOperand(operand qb.Operand) (qb.Operand, error) {
 	switch typed := operand.(type) {
 	case nil:
@@ -558,6 +647,43 @@ func (s Schema) projectOperand(operand qb.Operand) (qb.Operand, error) {
 	default:
 		return typed, nil
 	}
+}
+
+func (s Schema) projectCursor(cursor *qb.Cursor) (*qb.Cursor, error) {
+	if cursor == nil {
+		return nil, nil
+	}
+
+	clone := cursor.Clone()
+	if len(clone.Values) == 0 {
+		return &clone, nil
+	}
+
+	values := make(map[string]any, len(clone.Values))
+	for key, value := range clone.Values {
+		resolved, err := s.ResolveStorageField(key)
+		if err != nil {
+			return nil, qb.WrapError(
+				err,
+				qb.WithStage(qb.StageRewrite),
+				qb.WithField(key),
+			)
+		}
+
+		if _, exists := values[resolved]; exists {
+			return nil, qb.NewError(
+				fmt.Errorf("duplicate cursor field %q after storage projection", resolved),
+				qb.WithStage(qb.StageRewrite),
+				qb.WithCode(qb.CodeInvalidQuery),
+				qb.WithField(resolved),
+			)
+		}
+
+		values[resolved] = value
+	}
+
+	clone.Values = values
+	return &clone, nil
 }
 
 func (s Schema) rewriteScalars(values []qb.Scalar, resolver func(string) (string, error), stage qb.ErrorStage) ([]qb.Scalar, error) {

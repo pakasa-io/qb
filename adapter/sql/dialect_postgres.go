@@ -31,6 +31,7 @@ func (PostgresDialect) spec() registeredDialect {
 		"floor":             exactArity("floor", "FLOOR", 1),
 		"mod":               modCompiler(),
 		"round":             arityRange("round", "ROUND", 1, 2),
+		"round_double":      roundDoubleCompiler("postgres"),
 		"left":              leftCompiler("postgres"),
 		"right":             rightCompiler("postgres"),
 		"date":              exactArity("date", "DATE", 1),
@@ -64,6 +65,7 @@ func (PostgresDialect) spec() registeredDialect {
 		quote:       `"`,
 		placeholder: func(index int) string { return fmt.Sprintf("$%d", index) },
 		functions:   functions,
+		cast:        castCompiler("postgres"),
 		predicateCompilers: map[qb.Operator]PredicateCompiler{
 			qb.OpILike:  regexOp("ILIKE"),
 			qb.OpRegexp: regexOp("~"),
@@ -79,6 +81,9 @@ func (d PostgresDialect) QuoteIdentifier(identifier string) string {
 func (d PostgresDialect) Placeholder(index int) string { return d.spec().Placeholder(index) }
 func (d PostgresDialect) CompileFunction(name string, args []string) (string, error) {
 	return d.spec().CompileFunction(name, args)
+}
+func (d PostgresDialect) CompileCast(expr string, typeName string) (string, error) {
+	return d.spec().CompileCast(expr, typeName)
 }
 func (d PostgresDialect) CompilePredicate(op qb.Operator, left string, right string) (string, bool, error) {
 	return d.spec().CompilePredicate(op, left, right)

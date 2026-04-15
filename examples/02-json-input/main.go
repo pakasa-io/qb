@@ -9,40 +9,30 @@ import (
 
 func main() {
 	payload := []byte(`{
-		"pick": [
-			{
-				"$as": "normalized_name",
-				"$expr": {
-					"$call": "lower",
-					"args": [
-						{ "$field": "users.name" }
-					]
-				}
-			},
+		"$select": [
+			"lower(users.name) as normalized_name",
 			"status",
 			"role"
 		],
-		"where": {
+		"$where": {
 			"status": "active",
 			"age": { "$gte": 18 },
 			"$or": [
 				{ "role": "admin" },
 				{ "role": "owner" }
-			]
+			],
+			"$expr": {
+				"$eq": ["lower(@users.name)", "lower('john')"]
+			}
 		},
-		"group_by": [
-			{
-				"$call": "lower",
-				"args": [
-					{ "$field": "users.name" }
-				]
-			},
+		"$group": [
+			"lower(users.name)",
 			"status",
 			"role"
 		],
-		"sort": ["-created_at"],
-		"page": 3,
-		"size": 10
+		"$sort": ["lower(users.name) asc", "created_at desc"],
+		"$page": 3,
+		"$size": 10
 	}`)
 
 	query, err := mapinput.ParseJSON(payload)

@@ -27,6 +27,7 @@ func (MySQLDialect) spec() registeredDialect {
 		"floor":             exactArity("floor", "FLOOR", 1),
 		"mod":               modCompiler(),
 		"round":             arityRange("round", "ROUND", 1, 2),
+		"round_double":      roundDoubleCompiler("mysql"),
 		"left":              leftCompiler("mysql"),
 		"right":             rightCompiler("mysql"),
 		"date":              exactArity("date", "DATE", 1),
@@ -60,6 +61,7 @@ func (MySQLDialect) spec() registeredDialect {
 		quote:       "`",
 		placeholder: func(int) string { return "?" },
 		functions:   functions,
+		cast:        castCompiler("mysql"),
 		predicateCompilers: map[qb.Operator]PredicateCompiler{
 			qb.OpRegexp: regexLikeMySQL(),
 		},
@@ -74,6 +76,9 @@ func (d MySQLDialect) QuoteIdentifier(identifier string) string {
 func (d MySQLDialect) Placeholder(index int) string { return d.spec().Placeholder(index) }
 func (d MySQLDialect) CompileFunction(name string, args []string) (string, error) {
 	return d.spec().CompileFunction(name, args)
+}
+func (d MySQLDialect) CompileCast(expr string, typeName string) (string, error) {
+	return d.spec().CompileCast(expr, typeName)
 }
 func (d MySQLDialect) CompilePredicate(op qb.Operator, left string, right string) (string, bool, error) {
 	return d.spec().CompilePredicate(op, left, right)

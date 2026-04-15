@@ -209,6 +209,20 @@ func (r Renderer) CompileScalar(expr qb.Scalar, argIndex int) (string, []any, in
 			)
 		}
 		return sql, values, nextArg, nil
+	case qb.Cast:
+		part, partArgs, nextArg, err := r.CompileScalar(typed.Expr, argIndex)
+		if err != nil {
+			return "", nil, argIndex, err
+		}
+		sql, err := r.dialect.CompileCast(part, typed.Type)
+		if err != nil {
+			return "", nil, argIndex, qb.WrapError(
+				err,
+				qb.WithDefaultStage(r.stage),
+				qb.WithDefaultCode(qb.CodeInvalidQuery),
+			)
+		}
+		return sql, partArgs, nextArg, nil
 	default:
 		return "", nil, argIndex, qb.NewError(
 			fmt.Errorf("unsupported scalar expression %T", expr),

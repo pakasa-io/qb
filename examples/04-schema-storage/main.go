@@ -33,17 +33,18 @@ func main() {
 
 	query, err := mapinput.Parse(
 		map[string]any{
-			"pick": []any{"state", "role"},
-			"where": map[string]any{
+			"$select": "state,role",
+			"$where": map[string]any{
 				"state":  "active",
 				"minAge": map[string]any{"$gte": "21"},
 			},
-			"group_by": []any{"state", "role"},
-			"sort":     []any{"-createdAt"},
-			"page":     2,
-			"size":     10,
+			"$group": "state,role",
+			"$sort":  "-createdAt",
+			"$page":  2,
+			"$size":  10,
 		},
 		mapinput.WithFilterFieldResolver(userSchema.ResolveFilterField),
+		mapinput.WithGroupFieldResolver(userSchema.ResolveGroupField),
 		mapinput.WithSortFieldResolver(userSchema.ResolveSortField),
 		mapinput.WithValueDecoder(userSchema.DecodeValue),
 	)

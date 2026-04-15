@@ -43,8 +43,8 @@ func Example() {
 	)
 
 	payload := map[string]any{
-		"pick": []any{"state", "role"},
-		"where": map[string]any{
+		"$select": "state,role",
+		"$where": map[string]any{
 			"state":  "active",
 			"minAge": map[string]any{"$gte": "21"},
 			"$or": []any{
@@ -52,15 +52,16 @@ func Example() {
 				map[string]any{"role": "owner"},
 			},
 		},
-		"group_by": []any{"state", "role"},
-		"sort":     []any{"-createdAt"},
-		"page":     2,
-		"size":     10,
+		"$group": "state,role",
+		"$sort":  "-createdAt",
+		"$page":  2,
+		"$size":  10,
 	}
 
 	query, err := mapinput.Parse(
 		payload,
 		mapinput.WithFilterFieldResolver(userSchema.ResolveFilterField),
+		mapinput.WithGroupFieldResolver(userSchema.ResolveGroupField),
 		mapinput.WithSortFieldResolver(userSchema.ResolveSortField),
 		mapinput.WithValueDecoder(userSchema.DecodeValue),
 	)

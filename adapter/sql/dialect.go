@@ -11,6 +11,9 @@ import (
 // FunctionCompiler renders a scalar function call.
 type FunctionCompiler func(args []string) (string, error)
 
+// CastCompiler renders a scalar cast expression.
+type CastCompiler func(expr string, typeName string) (string, error)
+
 // PredicateCompiler renders a dialect-specific predicate operator.
 type PredicateCompiler func(left string, right string) (string, error)
 
@@ -20,6 +23,7 @@ type Dialect interface {
 	QuoteIdentifier(string) string
 	Placeholder(int) string
 	CompileFunction(name string, args []string) (string, error)
+	CompileCast(expr string, typeName string) (string, error)
 	CompilePredicate(op qb.Operator, left string, right string) (string, bool, error)
 	Capabilities() qb.Capabilities
 }
@@ -95,6 +99,7 @@ type registeredDialect struct {
 	quote              string
 	placeholder        func(int) string
 	functions          map[string]FunctionCompiler
+	cast               CastCompiler
 	predicateCompilers map[qb.Operator]PredicateCompiler
 	capabilities       qb.Capabilities
 }
@@ -117,6 +122,13 @@ func (d registeredDialect) CompileFunction(name string, args []string) (string, 
 		return "", qb.UnsupportedFunction("", d.name, strings.ToLower(strings.TrimSpace(name)))
 	}
 	return compiler(args)
+}
+
+func (d registeredDialect) CompileCast(expr string, typeName string) (string, error) {
+	if d.cast == nil {
+		return "", fmt.Errorf("casts are not supported for dialect %q", d.name)
+	}
+	return d.cast(expr, typeName)
 }
 
 func (d registeredDialect) CompilePredicate(op qb.Operator, left string, right string) (string, bool, error) {
