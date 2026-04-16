@@ -24,6 +24,10 @@ See:
 - [docs/JSON_DSL_SPEC.md](docs/JSON_DSL_SPEC.md) for the canonical JSON spec
 - [docs/YAML_DSL_SPEC.md](docs/YAML_DSL_SPEC.md) for the semantically identical YAML spec
 - [docs/QUERYSTRING_DSL_SPEC.md](docs/QUERYSTRING_DSL_SPEC.md) for the semantically identical query-string spec
+- [docs/CODEC_MODEL_SPEC.md](docs/CODEC_MODEL_SPEC.md) for the planned shared codec model
+- [docs/CODEC_JSON_ENCODING_SPEC.md](docs/CODEC_JSON_ENCODING_SPEC.md) for the planned JSON output codec
+- [docs/CODEC_YAML_ENCODING_SPEC.md](docs/CODEC_YAML_ENCODING_SPEC.md) for the planned YAML output codec
+- [docs/CODEC_QUERYSTRING_ENCODING_SPEC.md](docs/CODEC_QUERYSTRING_ENCODING_SPEC.md) for the planned query-string output codec
 
 `adapter/sql` defaults to PostgreSQL v17+ syntax. You can change the process-wide
 default with `sqladapter.SetDefaultDialect(...)` or override it per compiler
