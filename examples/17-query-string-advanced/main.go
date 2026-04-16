@@ -5,7 +5,7 @@ import (
 	"net/url"
 
 	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/parser/querystring"
+	"github.com/pakasa-io/qb/codec/querystring"
 )
 
 func main() {

@@ -33,7 +33,8 @@ if err != nil {
 
 ## 2. JSON / Map Input
 
-`parser/mapinput` accepts the compact `$...` envelope plus the scalar DSL.
+`codec/model` accepts normalized `$...` documents, while `codec/json` parses
+the same shape from JSON bytes.
 
 ```json
 {
@@ -66,7 +67,7 @@ if err != nil {
 ```
 
 ```go
-query, err := mapinput.ParseJSON(payload)
+query, err := jsoncodec.Parse(payload)
 if err != nil {
 	panic(err)
 }
@@ -83,7 +84,7 @@ Rules:
 
 ## 3. YAML Input
 
-`parser/yamlinput` is semantically identical to `parser/mapinput`. YAML is just
+`codec/yaml` is semantically identical to the JSON/model layer. YAML is just
 another serialization of the same model.
 
 ```yaml
@@ -112,7 +113,7 @@ YAML implicit typing surprises.
 
 ## 4. Query-String Input
 
-`parser/querystring` maps bracket-notation query params onto the same semantic
+`codec/querystring` maps bracket-notation query params onto the same semantic
 envelope.
 
 ```go
@@ -143,7 +144,7 @@ same as JSON or YAML would produce.
 Nested boolean logic is still JSON/YAML-native:
 
 ```go
-query, err := mapinput.Parse(map[string]any{
+query, err := model.Parse(map[string]any{
 	"$where": map[string]any{
 		"$or": []any{
 			map[string]any{
@@ -165,7 +166,7 @@ query, err := mapinput.Parse(map[string]any{
 Use `$expr` when either side is a computed expression:
 
 ```go
-query, err := mapinput.Parse(map[string]any{
+query, err := model.Parse(map[string]any{
 	"$where": map[string]any{
 		"$expr": map[string]any{
 			"$gte": []any{"round(@users.age::decimal, 2)", 18},
@@ -203,7 +204,7 @@ userSchema := schema.MustNew(
 	),
 )
 
-query, err := mapinput.Parse(
+query, err := model.Parse(
 	map[string]any{
 		"$select": "state",
 		"$where": map[string]any{
@@ -211,10 +212,10 @@ query, err := mapinput.Parse(
 			"minAge": map[string]any{"$gte": "21"},
 		},
 	},
-	mapinput.WithFilterFieldResolver(userSchema.ResolveFilterField),
-	mapinput.WithGroupFieldResolver(userSchema.ResolveGroupField),
-	mapinput.WithSortFieldResolver(userSchema.ResolveSortField),
-	mapinput.WithValueDecoder(userSchema.DecodeValue),
+	model.WithFilterFieldResolver(userSchema.ResolveFilterField),
+	model.WithGroupFieldResolver(userSchema.ResolveGroupField),
+	model.WithSortFieldResolver(userSchema.ResolveSortField),
+	model.WithValueDecoder(userSchema.DecodeValue),
 )
 if err != nil {
 	panic(err)
@@ -257,7 +258,7 @@ query, err := qb.New().
 Cursor pagination in the core is metadata plus a rewrite step:
 
 ```go
-query, err := mapinput.Parse(map[string]any{
+query, err := model.Parse(map[string]any{
 	"$cursor": map[string]any{
 		"created_at": "2026-04-11T12:00:00Z",
 		"id":         981,
@@ -305,7 +306,7 @@ The parsers can express the same model with the DSL:
 Parser, schema, and adapter failures return structured `qb.Error` values.
 
 ```go
-_, err := mapinput.Parse(map[string]any{
+_, err := model.Parse(map[string]any{
 	"$size": "not-a-number",
 })
 

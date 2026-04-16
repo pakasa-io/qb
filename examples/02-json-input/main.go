@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/parser/mapinput"
+	jsoncodec "github.com/pakasa-io/qb/codec/json"
 )
 
 func main() {
@@ -35,7 +35,7 @@ func main() {
 		"$size": 10
 	}`)
 
-	query, err := mapinput.ParseJSON(payload)
+	query, err := jsoncodec.Parse(payload)
 	if err != nil {
 		panic(err)
 	}

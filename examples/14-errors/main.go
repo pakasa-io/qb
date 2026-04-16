@@ -6,12 +6,12 @@ import (
 
 	"github.com/pakasa-io/qb"
 	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/parser/mapinput"
+	"github.com/pakasa-io/qb/codec/model"
 	"github.com/pakasa-io/qb/schema"
 )
 
 func main() {
-	_, err := mapinput.Parse(map[string]any{
+	_, err := model.Parse(map[string]any{
 		"$where": map[string]any{
 			"deleted_at": map[string]any{"$isnull": false},
 		},

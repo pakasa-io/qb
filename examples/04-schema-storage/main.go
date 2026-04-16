@@ -6,7 +6,7 @@ import (
 
 	"github.com/pakasa-io/qb"
 	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/parser/mapinput"
+	"github.com/pakasa-io/qb/codec/model"
 	"github.com/pakasa-io/qb/schema"
 )
 
@@ -31,7 +31,7 @@ func main() {
 		schema.Define("created_at", schema.Storage("users.created_at"), schema.Aliases("createdAt"), schema.Sortable()),
 	)
 
-	query, err := mapinput.Parse(
+	query, err := model.Parse(
 		map[string]any{
 			"$select": "state,role",
 			"$where": map[string]any{
@@ -43,10 +43,10 @@ func main() {
 			"$page":  2,
 			"$size":  10,
 		},
-		mapinput.WithFilterFieldResolver(userSchema.ResolveFilterField),
-		mapinput.WithGroupFieldResolver(userSchema.ResolveGroupField),
-		mapinput.WithSortFieldResolver(userSchema.ResolveSortField),
-		mapinput.WithValueDecoder(userSchema.DecodeValue),
+		model.WithFilterFieldResolver(userSchema.ResolveFilterField),
+		model.WithGroupFieldResolver(userSchema.ResolveGroupField),
+		model.WithSortFieldResolver(userSchema.ResolveSortField),
+		model.WithValueDecoder(userSchema.DecodeValue),
 	)
 	if err != nil {
 		panic(err)

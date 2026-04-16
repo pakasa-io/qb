@@ -1,7 +1,7 @@
 # Compact JSON DSL
 
 This document defines the canonical JSON and map input format for `qb`.
-It is the format implemented by `parser/mapinput`.
+It is implemented by the `codec/json` and `codec/model` packages.
 
 Status: implemented and canonical.
 

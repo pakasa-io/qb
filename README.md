@@ -2,7 +2,7 @@
 
 `qb` is a database-agnostic query builder core for Go.
 
-The package centers on a semantic `qb.Query` AST. Parsers turn external
+The package centers on a semantic `qb.Query` AST. Codecs turn external
 payloads into `qb.Query`, and adapters turn `qb.Query` into backend-specific
 output. The core stays independent from HTTP, JSON, YAML, SQL drivers, and
 ORMs.
@@ -10,9 +10,10 @@ ORMs.
 ## Package Layout
 
 - `qb`: query AST, fluent builder, scalar expressions, projections, rewrites
-- `parser/mapinput`: parse normalized maps or JSON using the compact `$...` envelope
-- `parser/yamlinput`: parse YAML using the same semantics as `parser/mapinput`
-- `parser/querystring`: parse bracket-notation query strings using the same semantics
+- `codec/model`: shared document parsing, field resolvers, value decoding, literal codecs
+- `codec/json`: JSON parse and ordered JSON emission
+- `codec/yaml`: YAML parse and ordered YAML emission
+- `codec/querystring`: bracket-notation query-string parse and canonical encoding
 - `schema`: optional aliasing, field policy, value decoding, and storage mapping
 - `adapter/sql`: compile to parameterized SQL with PostgreSQL, MySQL, and SQLite dialects
 - `adapter/gorm`: apply the same query AST to GORM chains
@@ -81,7 +82,7 @@ payload := map[string]any{
 	"$size":  20,
 }
 
-query, err := mapinput.Parse(payload)
+query, err := model.Parse(payload)
 ```
 
 Canonical top-level keys are:
@@ -134,7 +135,7 @@ $page: 2
 $size: 20
 `)
 
-query, err := yamlinput.Parse(payload)
+query, err := yamlcodec.Parse(payload)
 ```
 
 ## Schema-Driven Usage
@@ -159,7 +160,7 @@ userSchema := schema.MustNew(
 	schema.Define("created_at", schema.Storage("users.created_at"), schema.Aliases("createdAt"), schema.Sortable()),
 )
 
-query, err := mapinput.Parse(
+query, err := model.Parse(
 	map[string]any{
 		"$select": "state",
 		"$where": map[string]any{
@@ -168,10 +169,10 @@ query, err := mapinput.Parse(
 		},
 		"$sort": "-createdAt",
 	},
-	mapinput.WithFilterFieldResolver(userSchema.ResolveFilterField),
-	mapinput.WithGroupFieldResolver(userSchema.ResolveGroupField),
-	mapinput.WithSortFieldResolver(userSchema.ResolveSortField),
-	mapinput.WithValueDecoder(userSchema.DecodeValue),
+	model.WithFilterFieldResolver(userSchema.ResolveFilterField),
+	model.WithGroupFieldResolver(userSchema.ResolveGroupField),
+	model.WithSortFieldResolver(userSchema.ResolveSortField),
+	model.WithValueDecoder(userSchema.DecodeValue),
 )
 if err != nil {
 	panic(err)

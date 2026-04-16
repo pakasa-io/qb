@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/parser/yamlinput"
+	yamlcodec "github.com/pakasa-io/qb/codec/yaml"
 )
 
 func main() {
@@ -28,7 +28,7 @@ $page: 2
 $size: 10
 `)
 
-	query, err := yamlinput.Parse(payload)
+	query, err := yamlcodec.Parse(payload)
 	if err != nil {
 		panic(err)
 	}

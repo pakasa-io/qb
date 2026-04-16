@@ -6,7 +6,7 @@ import (
 
 	"github.com/pakasa-io/qb"
 	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/parser/mapinput"
+	"github.com/pakasa-io/qb/codec/model"
 	"github.com/pakasa-io/qb/schema"
 )
 
@@ -28,7 +28,7 @@ func main() {
 		),
 	)
 
-	query, err := mapinput.Parse(
+	query, err := model.Parse(
 		map[string]any{
 			"$sort": []any{"createdAt desc", "id desc"},
 			"$cursor": map[string]any{
@@ -37,8 +37,8 @@ func main() {
 			},
 			"$size": 25,
 		},
-		mapinput.WithSortFieldResolver(orderSchema.ResolveSortField),
-		mapinput.WithValueDecoder(orderSchema.DecodeValue),
+		model.WithSortFieldResolver(orderSchema.ResolveSortField),
+		model.WithValueDecoder(orderSchema.DecodeValue),
 	)
 	if err != nil {
 		panic(err)

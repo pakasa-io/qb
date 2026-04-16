@@ -7,8 +7,8 @@ import (
 
 	"github.com/pakasa-io/qb"
 	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/parser/mapinput"
-	"github.com/pakasa-io/qb/parser/querystring"
+	"github.com/pakasa-io/qb/codec/model"
+	"github.com/pakasa-io/qb/codec/querystring"
 	"github.com/pakasa-io/qb/schema"
 )
 
@@ -44,8 +44,8 @@ func main() {
 
 	query, err := querystring.Parse(
 		values,
-		mapinput.WithFilterFieldResolver(userSchema.ResolveFilterField),
-		mapinput.WithValueDecoder(userSchema.DecodeValue),
+		model.WithFilterFieldResolver(userSchema.ResolveFilterField),
+		model.WithValueDecoder(userSchema.DecodeValue),
 	)
 	if err != nil {
 		panic(err)
