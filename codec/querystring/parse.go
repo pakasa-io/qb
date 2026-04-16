@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"github.com/pakasa-io/qb"
-	"github.com/pakasa-io/qb/parser/mapinput"
+	"github.com/pakasa-io/qb/codec/model"
 )
 
 // Parse converts bracket-notation query-string values into a qb.Query.
-func Parse(values url.Values, opts ...mapinput.Option) (qb.Query, error) {
+func Parse(values url.Values, opts ...model.Option) (qb.Query, error) {
 	document := map[string]any{}
 
 	keys := make([]string, 0, len(values))
@@ -70,7 +70,20 @@ func Parse(values url.Values, opts ...mapinput.Option) (qb.Query, error) {
 		document = root
 	}
 
-	return mapinput.Parse(document, opts...)
+	return model.ParseDocument(document, opts...)
+}
+
+// ParseString parses a raw query-string into a qb.Query.
+func ParseString(raw string, opts ...model.Option) (qb.Query, error) {
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return qb.Query{}, qb.NewError(
+			err,
+			qb.WithStage(qb.StageParse),
+			qb.WithCode(qb.CodeInvalidInput),
+		)
+	}
+	return Parse(values, opts...)
 }
 
 func tokenize(key string) ([]string, error) {

@@ -1,4 +1,4 @@
-package mapinput_test
+package model_test
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 
 	"github.com/pakasa-io/qb"
 	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/parser/mapinput"
+	"github.com/pakasa-io/qb/codec/model"
 )
 
 func TestParse(t *testing.T) {
@@ -24,7 +24,7 @@ func TestParse(t *testing.T) {
 		"$size": "10",
 	}
 
-	query, err := mapinput.Parse(input)
+	query, err := model.Parse(input)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -50,7 +50,7 @@ func TestParseWithValueDecoder(t *testing.T) {
 		},
 	}
 
-	query, err := mapinput.Parse(input, mapinput.WithValueDecoder(func(field string, _ qb.Operator, value any) (any, error) {
+	query, err := model.Parse(input, model.WithValueDecoder(func(field string, _ qb.Operator, value any) (any, error) {
 		if field != "age" {
 			return value, nil
 		}
@@ -69,7 +69,7 @@ func TestParseWithValueDecoder(t *testing.T) {
 }
 
 func TestParseReturnsStructuredError(t *testing.T) {
-	_, err := mapinput.Parse(map[string]any{
+	_, err := model.Parse(map[string]any{
 		"$size": "not-a-number",
 	})
 	if err == nil {
@@ -99,7 +99,7 @@ func TestParseSelectIncludeGroupAndPageSize(t *testing.T) {
 		"$size": json.Number("25"),
 	}
 
-	query, err := mapinput.Parse(input)
+	query, err := model.Parse(input)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -131,11 +131,11 @@ func TestParseSelectIncludeGroupAndPageSize(t *testing.T) {
 }
 
 func TestParseGroupUsesDedicatedGroupResolver(t *testing.T) {
-	query, err := mapinput.Parse(
+	query, err := model.Parse(
 		map[string]any{
 			"$group": []any{"state", "lower(state)"},
 		},
-		mapinput.WithGroupFieldResolver(func(field string) (string, error) {
+		model.WithGroupFieldResolver(func(field string) (string, error) {
 			switch field {
 			case "state":
 				return "status", nil
@@ -181,7 +181,7 @@ func TestParseDSLExpressions(t *testing.T) {
 		},
 	}
 
-	query, err := mapinput.Parse(input)
+	query, err := model.Parse(input)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -232,7 +232,7 @@ func TestParseExpressionPredicates(t *testing.T) {
 		},
 	}
 
-	query, err := mapinput.Parse(input)
+	query, err := model.Parse(input)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -251,7 +251,7 @@ func TestParseExpressionPredicates(t *testing.T) {
 }
 
 func TestParseCursor(t *testing.T) {
-	query, err := mapinput.Parse(map[string]any{
+	query, err := model.Parse(map[string]any{
 		"$cursor": map[string]any{
 			"created_at": "2026-04-11T12:00:00Z",
 			"id":         json.Number("981"),
@@ -285,7 +285,7 @@ func TestParseCursor(t *testing.T) {
 }
 
 func TestParseRejectsUnknownTopLevelKey(t *testing.T) {
-	_, err := mapinput.Parse(map[string]any{
+	_, err := model.Parse(map[string]any{
 		"$select": "id",
 		"$pick":   "status",
 	})
@@ -295,7 +295,7 @@ func TestParseRejectsUnknownTopLevelKey(t *testing.T) {
 }
 
 func TestParseRejectsExpressionBearingStringSelect(t *testing.T) {
-	_, err := mapinput.Parse(map[string]any{
+	_, err := model.Parse(map[string]any{
 		"$select": "lower(users.name) as normalized_name,users.age",
 	})
 	if err == nil {
@@ -304,7 +304,7 @@ func TestParseRejectsExpressionBearingStringSelect(t *testing.T) {
 }
 
 func TestParseRejectsAliasesInGroup(t *testing.T) {
-	_, err := mapinput.Parse(map[string]any{
+	_, err := model.Parse(map[string]any{
 		"$group": []any{"lower(users.name) as normalized_name"},
 	})
 	if err == nil {
@@ -313,7 +313,7 @@ func TestParseRejectsAliasesInGroup(t *testing.T) {
 }
 
 func TestParseRejectsCursorWithoutSize(t *testing.T) {
-	_, err := mapinput.Parse(map[string]any{
+	_, err := model.Parse(map[string]any{
 		"$cursor": "opaque-cursor",
 	})
 	if err == nil {
@@ -322,7 +322,7 @@ func TestParseRejectsCursorWithoutSize(t *testing.T) {
 }
 
 func TestParseRejectsInvalidIsNullOperand(t *testing.T) {
-	_, err := mapinput.Parse(map[string]any{
+	_, err := model.Parse(map[string]any{
 		"$where": map[string]any{
 			"deleted_at": map[string]any{"$isnull": false},
 		},
@@ -333,7 +333,7 @@ func TestParseRejectsInvalidIsNullOperand(t *testing.T) {
 }
 
 func TestParseRejectsInvalidExprIsNullOperandCount(t *testing.T) {
-	_, err := mapinput.Parse(map[string]any{
+	_, err := model.Parse(map[string]any{
 		"$where": map[string]any{
 			"$expr": map[string]any{
 				"$isnull": []any{"@users.deleted_at", "@users.archived_at"},

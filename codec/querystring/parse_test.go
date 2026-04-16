@@ -6,7 +6,7 @@ import (
 
 	"github.com/pakasa-io/qb"
 	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/parser/querystring"
+	"github.com/pakasa-io/qb/codec/querystring"
 )
 
 func TestParse(t *testing.T) {

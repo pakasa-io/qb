@@ -1,16 +1,15 @@
-package yamlinput
+package yamlcodec
 
 import (
 	"fmt"
 
 	"github.com/pakasa-io/qb"
-	"github.com/pakasa-io/qb/parser/mapinput"
+	"github.com/pakasa-io/qb/codec/model"
 	"gopkg.in/yaml.v3"
 )
 
-// Parse decodes YAML input and parses it into a qb.Query using the compact
-// `$...` envelope shared with parser/mapinput.
-func Parse(data []byte, opts ...mapinput.Option) (qb.Query, error) {
+// Parse decodes YAML input and parses it into a qb.Query using the shared codec document model.
+func Parse(data []byte, opts ...model.Option) (qb.Query, error) {
 	var payload any
 	if err := yaml.Unmarshal(data, &payload); err != nil {
 		return qb.Query{}, qb.NewError(
@@ -29,7 +28,7 @@ func Parse(data []byte, opts ...mapinput.Option) (qb.Query, error) {
 		)
 	}
 
-	return mapinput.Parse(object, opts...)
+	return model.ParseDocument(object, opts...)
 }
 
 func normalizeYAML(value any) any {

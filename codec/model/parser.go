@@ -1,7 +1,6 @@
-package mapinput
+package model
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -10,57 +9,8 @@ import (
 	"strings"
 
 	"github.com/pakasa-io/qb"
+	"github.com/pakasa-io/qb/codec/dsl"
 )
-
-// ValueDecoder allows callers to coerce raw parser values into domain values.
-type ValueDecoder func(field string, op qb.Operator, value any) (any, error)
-
-// FilterFieldResolver canonicalizes and validates filter fields.
-type FilterFieldResolver func(field string, op qb.Operator) (string, error)
-
-// GroupFieldResolver canonicalizes and validates grouping fields.
-type GroupFieldResolver func(field string) (string, error)
-
-// SortFieldResolver canonicalizes and validates sort fields.
-type SortFieldResolver func(field string) (string, error)
-
-type options struct {
-	valueDecoder        ValueDecoder
-	filterFieldResolver FilterFieldResolver
-	groupFieldResolver  GroupFieldResolver
-	sortFieldResolver   SortFieldResolver
-}
-
-// Option customizes parsing behavior.
-type Option func(*options)
-
-// WithValueDecoder sets the value coercion hook used for predicate values.
-func WithValueDecoder(decoder ValueDecoder) Option {
-	return func(opts *options) {
-		opts.valueDecoder = decoder
-	}
-}
-
-// WithFilterFieldResolver sets a hook for canonicalizing filter fields.
-func WithFilterFieldResolver(resolver FilterFieldResolver) Option {
-	return func(opts *options) {
-		opts.filterFieldResolver = resolver
-	}
-}
-
-// WithGroupFieldResolver sets a hook for canonicalizing grouping fields.
-func WithGroupFieldResolver(resolver GroupFieldResolver) Option {
-	return func(opts *options) {
-		opts.groupFieldResolver = resolver
-	}
-}
-
-// WithSortFieldResolver sets a hook for canonicalizing sort fields.
-func WithSortFieldResolver(resolver SortFieldResolver) Option {
-	return func(opts *options) {
-		opts.sortFieldResolver = resolver
-	}
-}
 
 var allowedTopLevelKeys = map[string]struct{}{
 	"$select":  {},
@@ -73,26 +23,9 @@ var allowedTopLevelKeys = map[string]struct{}{
 	"$cursor":  {},
 }
 
-// ParseJSON decodes JSON input and parses it into a query.
-func ParseJSON(data []byte, opts ...Option) (qb.Query, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-
-	var payload map[string]any
-	if err := decoder.Decode(&payload); err != nil {
-		return qb.Query{}, parseError(err, qb.CodeInvalidInput)
-	}
-
-	return Parse(payload, opts...)
-}
-
-// Parse converts a normalized object into a query using the compact `$...`
-// envelope and scalar DSL.
-func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
-	config := options{}
-	for _, opt := range opts {
-		opt(&config)
-	}
+// ParseDocument converts a normalized canonical/compact codec document into a query.
+func ParseDocument(input map[string]any, opts ...Option) (qb.Query, error) {
+	config := buildOptions(opts...)
 
 	document := normalizeObject(input)
 	if err := validateTopLevel(document); err != nil {
@@ -180,7 +113,7 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 	}
 
 	if raw, ok := pickValue(document, "$cursor"); ok {
-		cursor, err := parseCursor(raw, "$cursor")
+		cursor, err := parseCursor(raw, config, "$cursor")
 		if err != nil {
 			return qb.Query{}, err
 		}
@@ -192,6 +125,11 @@ func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
 	}
 
 	return query, nil
+}
+
+// Parse is a convenience alias for ParseDocument.
+func Parse(input map[string]any, opts ...Option) (qb.Query, error) {
+	return ParseDocument(input, opts...)
 }
 
 func validateTopLevel(input map[string]any) error {
@@ -223,23 +161,31 @@ func parseSelect(node any, opts options, path string) ([]qb.Projection, error) {
 	case []any:
 		out := make([]qb.Projection, 0, len(typed))
 		for i, item := range typed {
-			value, ok := item.(string)
-			if !ok {
+			itemPath := fmt.Sprintf("%s[%d]", path, i)
+			switch value := item.(type) {
+			case string:
+				expr, alias, err := dsl.ParseStandaloneScalar(value, true, literalTokenDecoder(opts.literalCodec))
+				if err != nil {
+					return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(itemPath))
+				}
+				projection := qb.Project(expr)
+				if alias != "" {
+					projection = projection.As(alias)
+				}
+				out = append(out, projection)
+			case map[string]any:
+				projection, err := parseProjectionNode(value, opts, itemPath)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, projection)
+			default:
 				return nil, parseError(
-					fmt.Errorf("expected string, got %T", item),
+					fmt.Errorf("expected string or object, got %T", item),
 					qb.CodeInvalidInput,
-					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+					qb.WithPath(itemPath),
 				)
 			}
-			expr, alias, err := parseStandaloneScalar(value, true)
-			if err != nil {
-				return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(fmt.Sprintf("%s[%d]", path, i)))
-			}
-			projection := qb.Project(expr)
-			if alias != "" {
-				projection = projection.As(alias)
-			}
-			out = append(out, projection)
 		}
 		return out, nil
 	default:
@@ -270,26 +216,34 @@ func parseGroup(node any, opts options, path string) ([]qb.Scalar, error) {
 	case []any:
 		out := make([]qb.Scalar, 0, len(typed))
 		for i, item := range typed {
-			value, ok := item.(string)
-			if !ok {
+			itemPath := fmt.Sprintf("%s[%d]", path, i)
+			switch value := item.(type) {
+			case string:
+				expr, alias, err := dsl.ParseStandaloneScalar(value, false, literalTokenDecoder(opts.literalCodec))
+				if err != nil {
+					return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(itemPath))
+				}
+				if alias != "" {
+					return nil, parseError(
+						fmt.Errorf("aliases are not allowed in $group"),
+						qb.CodeInvalidInput,
+						qb.WithPath(itemPath),
+					)
+				}
+				out = append(out, expr)
+			case map[string]any:
+				expr, err := parseScalarNode(value, opts, itemPath)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, expr)
+			default:
 				return nil, parseError(
-					fmt.Errorf("expected string, got %T", item),
+					fmt.Errorf("expected string or object, got %T", item),
 					qb.CodeInvalidInput,
-					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+					qb.WithPath(itemPath),
 				)
 			}
-			expr, alias, err := parseStandaloneScalar(value, false)
-			if err != nil {
-				return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(fmt.Sprintf("%s[%d]", path, i)))
-			}
-			if alias != "" {
-				return nil, parseError(
-					fmt.Errorf("aliases are not allowed in $group"),
-					qb.CodeInvalidInput,
-					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
-				)
-			}
-			out = append(out, expr)
 		}
 		return resolveGroupScalars(out, opts, path)
 	default:
@@ -340,23 +294,35 @@ func parseSorts(node any, opts options, path string) ([]qb.Sort, error) {
 	case []any:
 		sorts := make([]qb.Sort, 0, len(typed))
 		for i, item := range typed {
-			value, ok := item.(string)
-			if !ok {
+			itemPath := fmt.Sprintf("%s[%d]", path, i)
+			switch value := item.(type) {
+			case string:
+				expr, direction, err := dsl.ParseSort(value, literalTokenDecoder(opts.literalCodec))
+				if err != nil {
+					return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(itemPath))
+				}
+				expr, err = resolveSortScalar(expr, opts, itemPath)
+				if err != nil {
+					return nil, err
+				}
+				sorts = append(sorts, qb.Sort{Expr: expr, Direction: direction})
+			case map[string]any:
+				sortExpr, err := parseSortNode(value, opts, itemPath)
+				if err != nil {
+					return nil, err
+				}
+				sortExpr.Expr, err = resolveSortScalar(sortExpr.Expr, opts, itemPath)
+				if err != nil {
+					return nil, err
+				}
+				sorts = append(sorts, sortExpr)
+			default:
 				return nil, parseError(
-					fmt.Errorf("expected string, got %T", item),
+					fmt.Errorf("expected string or object, got %T", item),
 					qb.CodeInvalidInput,
-					qb.WithPath(fmt.Sprintf("%s[%d]", path, i)),
+					qb.WithPath(itemPath),
 				)
 			}
-			expr, direction, err := parseSortItem(value)
-			if err != nil {
-				return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(fmt.Sprintf("%s[%d]", path, i)))
-			}
-			expr, err = resolveSortScalar(expr, opts, fmt.Sprintf("%s[%d]", path, i))
-			if err != nil {
-				return nil, err
-			}
-			sorts = append(sorts, qb.Sort{Expr: expr, Direction: direction})
 		}
 		return sorts, nil
 	default:
@@ -444,7 +410,7 @@ func parseLogicalGroup(combine func(...qb.Expr) qb.Expr, node any, opts options,
 }
 
 func parseComputedFilter(key string, node any, opts options, path string) (qb.Expr, error) {
-	left, alias, err := parseStandaloneScalar(key, false)
+	left, alias, err := dsl.ParseStandaloneScalar(key, false, literalTokenDecoder(opts.literalCodec))
 	if err != nil {
 		return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(path))
 	}
@@ -656,10 +622,27 @@ func parseMixedScalar(node any, field string, op qb.Operator, opts options, path
 		return qb.CloneScalar(expr), nil
 	}
 
+	if object, ok := node.(map[string]any); ok {
+		if looksLikeScalarNode(object) {
+			return parseScalarNode(object, opts, path)
+		}
+		if looksLikeLiteralNode(object) {
+			value, err := parseLiteralNode(object, opts, path)
+			if err != nil {
+				return nil, err
+			}
+			decoded, err := decodeValue(field, op, value, opts, path)
+			if err != nil {
+				return nil, err
+			}
+			return qb.V(decoded), nil
+		}
+	}
+
 	if value, ok := node.(string); ok {
 		trimmed := strings.TrimSpace(value)
 		if isMixedDSLString(trimmed) {
-			expr, alias, err := parseStandaloneScalar(trimmed, false)
+			expr, alias, err := dsl.ParseStandaloneScalar(trimmed, false, literalTokenDecoder(opts.literalCodec))
 			if err != nil {
 				return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(path))
 			}
@@ -894,7 +877,7 @@ func parseDelimitedStrings(node any, path string) ([]string, error) {
 	}
 }
 
-func parseCursor(node any, path string) (*qb.Cursor, error) {
+func parseCursor(node any, opts options, path string) (*qb.Cursor, error) {
 	switch typed := node.(type) {
 	case string:
 		typed = strings.TrimSpace(typed)
@@ -909,7 +892,11 @@ func parseCursor(node any, path string) (*qb.Cursor, error) {
 	case map[string]any:
 		cursor := qb.Cursor{Values: make(map[string]any, len(typed))}
 		for key, value := range typed {
-			cursor.Values[key] = normalizeValue(value)
+			normalized, err := parseCursorValue(normalizeValue(value), opts, path+"."+key)
+			if err != nil {
+				return nil, err
+			}
+			cursor.Values[key] = normalized
 		}
 		return &cursor, nil
 	default:
@@ -967,6 +954,14 @@ func isSimpleFieldRef(value string) bool {
 
 func isMixedDSLString(value string) bool {
 	return strings.Contains(value, "@") || strings.Contains(value, "(") || strings.Contains(value, "::") || strings.Contains(value, "'")
+}
+
+func isIdentStart(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_'
+}
+
+func isIdentContinue(r rune) bool {
+	return isIdentStart(r) || (r >= '0' && r <= '9')
 }
 
 func validateUnaryPredicateOperand(value any, path string) error {
@@ -1050,6 +1045,13 @@ func parseInteger(value any, path string) (int, error) {
 
 func decodeValue(field string, op qb.Operator, value any, opts options, path string) (any, error) {
 	value = normalizeValue(value)
+	if node, ok := value.(map[string]any); ok && looksLikeLiteralNode(node) {
+		parsed, err := parseLiteralNode(node, opts, path)
+		if err != nil {
+			return nil, err
+		}
+		value = parsed
+	}
 	if opts.valueDecoder == nil {
 		return value, nil
 	}
@@ -1140,4 +1142,226 @@ func parseError(err error, code qb.ErrorCode, opts ...qb.ErrorOption) error {
 	allOpts = append(allOpts, qb.WithDefaultStage(qb.StageParse), qb.WithDefaultCode(code))
 	allOpts = append(allOpts, opts...)
 	return qb.WrapError(err, allOpts...)
+}
+
+func parseProjectionNode(node map[string]any, opts options, path string) (qb.Projection, error) {
+	rawExpr, ok := node["$expr"]
+	if !ok {
+		return qb.Projection{}, parseError(
+			fmt.Errorf("projection object requires $expr"),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
+	}
+	expr, err := parseScalarAny(rawExpr, opts, path+".$expr")
+	if err != nil {
+		return qb.Projection{}, err
+	}
+	projection := qb.Project(expr)
+	if rawAlias, ok := node["$as"]; ok {
+		alias, ok := rawAlias.(string)
+		if !ok || strings.TrimSpace(alias) == "" {
+			return qb.Projection{}, parseError(
+				fmt.Errorf("$as must be a non-empty string"),
+				qb.CodeInvalidInput,
+				qb.WithPath(path+".$as"),
+			)
+		}
+		projection = projection.As(alias)
+	}
+	return projection, nil
+}
+
+func parseSortNode(node map[string]any, opts options, path string) (qb.Sort, error) {
+	rawExpr, ok := node["$expr"]
+	if !ok {
+		return qb.Sort{}, parseError(
+			fmt.Errorf("sort object requires $expr"),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
+	}
+	expr, err := parseScalarAny(rawExpr, opts, path+".$expr")
+	if err != nil {
+		return qb.Sort{}, err
+	}
+	direction := qb.Asc
+	if rawDir, ok := node["$dir"]; ok {
+		dir, ok := rawDir.(string)
+		if !ok {
+			return qb.Sort{}, parseError(
+				fmt.Errorf("$dir must be a string"),
+				qb.CodeInvalidInput,
+				qb.WithPath(path+".$dir"),
+			)
+		}
+		switch strings.ToLower(strings.TrimSpace(dir)) {
+		case "asc", "":
+			direction = qb.Asc
+		case "desc":
+			direction = qb.Desc
+		default:
+			return qb.Sort{}, parseError(
+				fmt.Errorf("unsupported sort direction %q", dir),
+				qb.CodeInvalidInput,
+				qb.WithPath(path+".$dir"),
+			)
+		}
+	}
+	return qb.Sort{Expr: expr, Direction: direction}, nil
+}
+
+func parseScalarAny(node any, opts options, path string) (qb.Scalar, error) {
+	switch typed := normalizeValue(node).(type) {
+	case string:
+		expr, alias, err := dsl.ParseStandaloneScalar(typed, false, literalTokenDecoder(opts.literalCodec))
+		if err != nil {
+			return nil, parseError(err, qb.CodeInvalidInput, qb.WithPath(path))
+		}
+		if alias != "" {
+			return nil, parseError(
+				fmt.Errorf("aliases are not allowed in scalar expressions"),
+				qb.CodeInvalidInput,
+				qb.WithPath(path),
+			)
+		}
+		return expr, nil
+	case map[string]any:
+		return parseScalarNode(typed, opts, path)
+	default:
+		return qb.V(typed), nil
+	}
+}
+
+func parseScalarNode(node map[string]any, opts options, path string) (qb.Scalar, error) {
+	switch {
+	case hasOnlyKnownKeys(node, "$field"):
+		field, ok := node["$field"].(string)
+		if !ok || strings.TrimSpace(field) == "" {
+			return nil, parseError(fmt.Errorf("$field must be a non-empty string"), qb.CodeInvalidInput, qb.WithPath(path+".$field"))
+		}
+		return qb.F(field), nil
+	case hasOnlyKnownKeys(node, "$literal", "$codec"):
+		value, err := parseLiteralNode(node, opts, path)
+		if err != nil {
+			return nil, err
+		}
+		return qb.V(value), nil
+	case hasOnlyKnownKeys(node, "$call", "$args"):
+		name, ok := node["$call"].(string)
+		if !ok || strings.TrimSpace(name) == "" {
+			return nil, parseError(fmt.Errorf("$call must be a non-empty string"), qb.CodeInvalidInput, qb.WithPath(path+".$call"))
+		}
+		var args []any
+		if rawArgs, ok := node["$args"]; ok {
+			list, ok := rawArgs.([]any)
+			if !ok {
+				return nil, parseError(fmt.Errorf("$args must be a list"), qb.CodeInvalidInput, qb.WithPath(path+".$args"))
+			}
+			args = make([]any, len(list))
+			for i, item := range list {
+				arg, err := parseScalarAny(item, opts, fmt.Sprintf("%s.$args[%d]", path, i))
+				if err != nil {
+					return nil, err
+				}
+				args[i] = arg
+			}
+		}
+		return qb.Func(name, args...), nil
+	case hasOnlyKnownKeys(node, "$cast", "$expr"):
+		typ, ok := node["$cast"].(string)
+		if !ok || strings.TrimSpace(typ) == "" {
+			return nil, parseError(fmt.Errorf("$cast must be a non-empty string"), qb.CodeInvalidInput, qb.WithPath(path+".$cast"))
+		}
+		rawExpr, ok := node["$expr"]
+		if !ok {
+			return nil, parseError(fmt.Errorf("$cast object requires $expr"), qb.CodeInvalidInput, qb.WithPath(path))
+		}
+		expr, err := parseScalarAny(rawExpr, opts, path+".$expr")
+		if err != nil {
+			return nil, err
+		}
+		return qb.CastTo(expr, typ), nil
+	default:
+		return nil, parseError(
+			fmt.Errorf("unsupported scalar object shape"),
+			qb.CodeInvalidInput,
+			qb.WithPath(path),
+		)
+	}
+}
+
+func parseLiteralNode(node map[string]any, opts options, path string) (any, error) {
+	raw, ok := node["$literal"]
+	if !ok {
+		return nil, parseError(fmt.Errorf("literal object requires $literal"), qb.CodeInvalidInput, qb.WithPath(path))
+	}
+	value := normalizeValue(raw)
+	codec := ""
+	if rawCodec, ok := node["$codec"]; ok {
+		typed, ok := rawCodec.(string)
+		if !ok || strings.TrimSpace(typed) == "" {
+			return nil, parseError(fmt.Errorf("$codec must be a non-empty string"), qb.CodeInvalidInput, qb.WithPath(path+".$codec"))
+		}
+		codec = typed
+	}
+	if codec == "" {
+		return value, nil
+	}
+	parsed, handled, err := opts.literalCodec.ParseLiteral(codec, value)
+	if err != nil {
+		return nil, parseError(err, qb.CodeInvalidValue, qb.WithPath(path+".$literal"))
+	}
+	if handled {
+		return parsed, nil
+	}
+	return value, nil
+}
+
+func parseCursorValue(value any, opts options, path string) (any, error) {
+	if node, ok := value.(map[string]any); ok && looksLikeLiteralNode(node) {
+		return parseLiteralNode(node, opts, path)
+	}
+	return value, nil
+}
+
+func looksLikeScalarNode(node map[string]any) bool {
+	_, hasField := node["$field"]
+	_, hasCall := node["$call"]
+	_, hasCast := node["$cast"]
+	return hasField || hasCall || hasCast || looksLikeLiteralNode(node)
+}
+
+func looksLikeLiteralNode(node map[string]any) bool {
+	_, ok := node["$literal"]
+	return ok
+}
+
+func hasOnlyKnownKeys(node map[string]any, keys ...string) bool {
+	allowed := map[string]struct{}{}
+	for _, key := range keys {
+		allowed[key] = struct{}{}
+	}
+	for key := range node {
+		if _, ok := allowed[key]; !ok {
+			return false
+		}
+	}
+	return len(node) > 0
+}
+
+func literalTokenDecoder(codec LiteralCodec) dsl.LiteralTokenDecoder {
+	return func(name string, literal string) (any, error) {
+		if codec == nil || name == "" {
+			return literal, nil
+		}
+		value, handled, err := codec.ParseLiteral(name, literal)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			return value, nil
+		}
+		return literal, nil
+	}
 }

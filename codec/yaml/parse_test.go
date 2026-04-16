@@ -1,4 +1,4 @@
-package yamlinput_test
+package yamlcodec_test
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 
 	"github.com/pakasa-io/qb"
 	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/parser/yamlinput"
+	yamlcodec "github.com/pakasa-io/qb/codec/yaml"
 )
 
 func TestParse(t *testing.T) {
@@ -30,7 +30,7 @@ $page: 2
 $size: 10
 `)
 
-	query, err := yamlinput.Parse(payload)
+	query, err := yamlcodec.Parse(payload)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -53,7 +53,7 @@ $size: 10
 }
 
 func TestParseRejectsNonObjectRoot(t *testing.T) {
-	_, err := yamlinput.Parse([]byte(`- users.id`))
+	_, err := yamlcodec.Parse([]byte(`- users.id`))
 	if err == nil {
 		t.Fatal("expected root object error")
 	}
@@ -72,7 +72,7 @@ func assertArgsEqual(t *testing.T, got []any, want []any) {
 }
 
 func TestParseYAMLReturnsStructuredError(t *testing.T) {
-	_, err := yamlinput.Parse([]byte("$size: nope"))
+	_, err := yamlcodec.Parse([]byte("$size: nope"))
 	if err == nil {
 		t.Fatal("expected parse error")
 	}

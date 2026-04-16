@@ -7,7 +7,7 @@ import (
 	"github.com/pakasa-io/qb"
 	gormadapter "github.com/pakasa-io/qb/adapter/gorm"
 	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/parser/mapinput"
+	"github.com/pakasa-io/qb/codec/model"
 	"github.com/pakasa-io/qb/schema"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -58,12 +58,12 @@ func Example() {
 		"$size":  10,
 	}
 
-	query, err := mapinput.Parse(
+	query, err := model.Parse(
 		payload,
-		mapinput.WithFilterFieldResolver(userSchema.ResolveFilterField),
-		mapinput.WithGroupFieldResolver(userSchema.ResolveGroupField),
-		mapinput.WithSortFieldResolver(userSchema.ResolveSortField),
-		mapinput.WithValueDecoder(userSchema.DecodeValue),
+		model.WithFilterFieldResolver(userSchema.ResolveFilterField),
+		model.WithGroupFieldResolver(userSchema.ResolveGroupField),
+		model.WithSortFieldResolver(userSchema.ResolveSortField),
+		model.WithValueDecoder(userSchema.DecodeValue),
 	)
 	if err != nil {
 		panic(err)
