@@ -1148,6 +1148,9 @@ func parseError(err error, code qb.ErrorCode, opts ...qb.ErrorOption) error {
 }
 
 func parseProjectionNode(node map[string]any, opts options, path string) (qb.Projection, error) {
+	if err := validateAllowedKeys(node, path, "$expr", "$as"); err != nil {
+		return qb.Projection{}, err
+	}
 	rawExpr, ok := node["$expr"]
 	if !ok {
 		return qb.Projection{}, parseError(
@@ -1176,6 +1179,9 @@ func parseProjectionNode(node map[string]any, opts options, path string) (qb.Pro
 }
 
 func parseSortNode(node map[string]any, opts options, path string) (qb.Sort, error) {
+	if err := validateAllowedKeys(node, path, "$expr", "$dir"); err != nil {
+		return qb.Sort{}, err
+	}
 	rawExpr, ok := node["$expr"]
 	if !ok {
 		return qb.Sort{}, parseError(
@@ -1351,6 +1357,29 @@ func hasOnlyKnownKeys(node map[string]any, keys ...string) bool {
 		}
 	}
 	return len(node) > 0
+}
+
+func validateAllowedKeys(node map[string]any, path string, keys ...string) error {
+	allowed := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		allowed[key] = struct{}{}
+	}
+
+	extra := make([]string, 0, len(node))
+	for key := range node {
+		if _, ok := allowed[key]; !ok {
+			extra = append(extra, key)
+		}
+	}
+	if len(extra) == 0 {
+		return nil
+	}
+	sort.Strings(extra)
+	return parseError(
+		fmt.Errorf("unknown key %q", extra[0]),
+		qb.CodeInvalidInput,
+		qb.WithPath(path+"."+extra[0]),
+	)
 }
 
 func literalTokenDecoder(codec LiteralCodec) dsl.LiteralTokenDecoder {

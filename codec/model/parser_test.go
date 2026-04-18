@@ -345,6 +345,36 @@ func TestParseRejectsInvalidExprIsNullOperandCount(t *testing.T) {
 	}
 }
 
+func TestParseRejectsUnknownProjectionWrapperKey(t *testing.T) {
+	_, err := model.Parse(map[string]any{
+		"$select": []any{
+			map[string]any{
+				"$expr": "users.id",
+				"$as":   "id",
+				"$junk": true,
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected unknown projection wrapper key error")
+	}
+}
+
+func TestParseRejectsUnknownSortWrapperKey(t *testing.T) {
+	_, err := model.Parse(map[string]any{
+		"$sort": []any{
+			map[string]any{
+				"$expr": "users.name",
+				"$dir":  "asc",
+				"$junk": true,
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected unknown sort wrapper key error")
+	}
+}
+
 func refName(expr qb.Scalar) string {
 	ref, ok := expr.(qb.Ref)
 	if !ok {
