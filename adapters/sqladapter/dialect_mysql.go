@@ -5,7 +5,7 @@ import "github.com/pakasa-io/qb"
 type MySQLDialect struct{}
 
 func (MySQLDialect) spec() registeredDialect {
-	functions := map[string]FunctionCompiler{
+	functions := map[string]functionCompiler{
 		"count":             zeroOrOne("count", "COUNT"),
 		"sum":               exactArity("sum", "SUM", 1),
 		"avg":               exactArity("avg", "AVG", 1),
@@ -37,9 +37,9 @@ func (MySQLDialect) spec() registeredDialect {
 		"current_time":      keyword("CURRENT_TIME"),
 		"localtimestamp":    keyword("LOCALTIMESTAMP"),
 		"current_timestamp": keyword("CURRENT_TIMESTAMP"),
-		"date_trunc":        unsupportedFunctionCompiler("mysql", "date_trunc"),
-		"extract":           unsupportedFunctionCompiler("mysql", "extract"),
-		"date_bin":          unsupportedFunctionCompiler("mysql", "date_bin"),
+		"date_trunc":        unsupportedfunctionCompiler("mysql", "date_trunc"),
+		"extract":           unsupportedfunctionCompiler("mysql", "extract"),
+		"date_bin":          unsupportedfunctionCompiler("mysql", "date_bin"),
 		"json_extract":      exactArity("json_extract", "JSON_EXTRACT", 2),
 		"json_query":        exactArity("json_query", "JSON_EXTRACT", 2),
 		"json_value":        exactArity("json_value", "JSON_VALUE", 2),
@@ -61,8 +61,8 @@ func (MySQLDialect) spec() registeredDialect {
 		quote:       "`",
 		placeholder: func(int) string { return "?" },
 		functions:   functions,
-		cast:        castCompiler("mysql"),
-		predicateCompilers: map[qb.Operator]PredicateCompiler{
+		cast:        castCompilerForDialect("mysql"),
+		predicateCompilers: map[qb.Operator]predicateCompiler{
 			qb.OpRegexp: regexLikeMySQL(),
 		},
 		capabilities: newCapabilities(functions, operators...),

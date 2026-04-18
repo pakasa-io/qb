@@ -1,4 +1,4 @@
-package sqladapter
+package sqlrender
 
 import (
 	"fmt"
@@ -7,31 +7,33 @@ import (
 	"github.com/pakasa-io/qb"
 )
 
-// Renderer compiles query fragments against a dialect for a specific error stage.
+type Dialect interface {
+	Name() string
+	QuoteIdentifier(string) string
+	Placeholder(int) string
+	CompileFunction(name string, args []string) (string, error)
+	CompileCast(expr string, typeName string) (string, error)
+	CompilePredicate(op qb.Operator, left string, right string) (string, bool, error)
+	Capabilities() qb.Capabilities
+}
+
 type Renderer struct {
 	dialect Dialect
 	stage   qb.ErrorStage
 }
 
-// NewRenderer creates a renderer for a dialect and error stage.
-func NewRenderer(dialect Dialect, stage qb.ErrorStage) Renderer {
-	if dialect == nil {
-		dialect = DefaultDialect()
-	}
+func New(dialect Dialect, stage qb.ErrorStage) Renderer {
 	return Renderer{dialect: dialect, stage: stage}
 }
 
-// Dialect exposes the underlying dialect.
 func (r Renderer) Dialect() Dialect {
 	return r.dialect
 }
 
-// Capabilities reports the dialect capabilities.
 func (r Renderer) Capabilities() qb.Capabilities {
 	return r.dialect.Capabilities()
 }
 
-// CompileProjectionList renders a SELECT list.
 func (r Renderer) CompileProjectionList(values []qb.Projection, argIndex int) (string, []any, int, error) {
 	parts := make([]string, 0, len(values))
 	args := make([]any, 0)
@@ -50,7 +52,6 @@ func (r Renderer) CompileProjectionList(values []qb.Projection, argIndex int) (s
 	return strings.Join(parts, ", "), args, nextArg, nil
 }
 
-// CompileScalarList renders a comma-delimited scalar list.
 func (r Renderer) CompileScalarList(values []qb.Scalar, kind string, argIndex int) (string, []any, int, error) {
 	parts := make([]string, 0, len(values))
 	args := make([]any, 0)
@@ -76,7 +77,6 @@ func (r Renderer) CompileScalarList(values []qb.Scalar, kind string, argIndex in
 	return strings.Join(parts, ", "), args, nextArg, nil
 }
 
-// CompileSorts renders ORDER BY fragments.
 func (r Renderer) CompileSorts(values []qb.Sort, argIndex int) (string, []any, int, error) {
 	parts := make([]string, 0, len(values))
 	args := make([]any, 0)
@@ -116,7 +116,6 @@ func (r Renderer) CompileSorts(values []qb.Sort, argIndex int) (string, []any, i
 	return strings.Join(parts, ", "), args, nextArg, nil
 }
 
-// CompileExpr renders an expression tree.
 func (r Renderer) CompileExpr(expr qb.Expr, argIndex int) (string, []any, int, error) {
 	switch typed := expr.(type) {
 	case qb.Predicate:
@@ -163,7 +162,6 @@ func (r Renderer) CompileExpr(expr qb.Expr, argIndex int) (string, []any, int, e
 	}
 }
 
-// CompileScalar renders a scalar expression.
 func (r Renderer) CompileScalar(expr qb.Scalar, argIndex int) (string, []any, int, error) {
 	switch typed := expr.(type) {
 	case nil:

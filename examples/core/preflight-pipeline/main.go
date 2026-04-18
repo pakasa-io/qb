@@ -50,13 +50,12 @@ func main() {
 		panic(err)
 	}
 
-	renderer := sqladapter.NewRenderer(sqladapter.PostgresDialect{}, qb.StageCompile)
 	pipeline := qb.ComposeTransformers(
 		enforceMaxSize(100),
 		defaultSort("created_at", qb.Desc),
 		userSchema.Normalize,
 		userSchema.ToStorage,
-		renderer.Capabilities().Validator(qb.StageCompile),
+		sqladapter.PostgresDialect{}.Capabilities().Validator(qb.StageCompile),
 	)
 
 	prepared, err := qb.TransformQuery(query, pipeline)

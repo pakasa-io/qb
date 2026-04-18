@@ -8,14 +8,11 @@ import (
 	"github.com/pakasa-io/qb"
 )
 
-// FunctionCompiler renders a scalar function call.
-type FunctionCompiler func(args []string) (string, error)
+type functionCompiler func(args []string) (string, error)
 
-// CastCompiler renders a scalar cast expression.
-type CastCompiler func(expr string, typeName string) (string, error)
+type castCompiler func(expr string, typeName string) (string, error)
 
-// PredicateCompiler renders a dialect-specific predicate operator.
-type PredicateCompiler func(left string, right string) (string, error)
+type predicateCompiler func(left string, right string) (string, error)
 
 // Dialect controls SQL quoting, placeholders, functions, and special operators.
 type Dialect interface {
@@ -98,9 +95,9 @@ type registeredDialect struct {
 	name               string
 	quote              string
 	placeholder        func(int) string
-	functions          map[string]FunctionCompiler
-	cast               CastCompiler
-	predicateCompilers map[qb.Operator]PredicateCompiler
+	functions          map[string]functionCompiler
+	cast               castCompiler
+	predicateCompilers map[qb.Operator]predicateCompiler
 	capabilities       qb.Capabilities
 }
 
@@ -144,7 +141,7 @@ func (d registeredDialect) Capabilities() qb.Capabilities {
 	return d.capabilities
 }
 
-func newCapabilities(functions map[string]FunctionCompiler, operators ...qb.Operator) qb.Capabilities {
+func newCapabilities(functions map[string]functionCompiler, operators ...qb.Operator) qb.Capabilities {
 	functionCaps := make(map[string]struct{}, len(functions))
 	for name := range functions {
 		functionCaps[name] = struct{}{}

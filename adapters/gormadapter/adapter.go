@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/pakasa-io/qb"
+	sqlrender "github.com/pakasa-io/qb/adapters/internal/sqlrender"
 	sqladapter "github.com/pakasa-io/qb/adapters/sqladapter"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -39,7 +40,7 @@ func WithQueryTransformer(transformer qb.QueryTransformer) Option {
 // Capabilities reports query features supported by the adapter using the
 // current default SQL dialect as the baseline.
 func (a Adapter) Capabilities() qb.Capabilities {
-	capabilities := sqladapter.NewRenderer(sqladapter.DefaultDialect(), qb.StageApply).Capabilities()
+	capabilities := sqladapter.DefaultDialect().Capabilities()
 	capabilities.SupportsInclude = true
 	return capabilities
 }
@@ -60,7 +61,7 @@ func (a Adapter) Apply(db *gorm.DB, query qb.Query) (*gorm.DB, error) {
 	}
 
 	dialect := lookupDialect(db.Dialector.Name())
-	renderer := sqladapter.NewRenderer(dialect, qb.StageApply)
+	renderer := sqlrender.New(dialect, qb.StageApply)
 
 	capabilities := renderer.Capabilities()
 	capabilities.SupportsInclude = true

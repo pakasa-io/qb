@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/pakasa-io/qb"
-	codecconfig "github.com/pakasa-io/qb/codecs/config"
+	codecconfig "github.com/pakasa-io/qb/codecs/internal/config"
 	"github.com/pakasa-io/qb/codecs/internal/dsl"
 )
 

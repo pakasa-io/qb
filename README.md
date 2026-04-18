@@ -10,8 +10,7 @@ ORMs.
 ## Package Layout
 
 - `qb`: query AST, fluent builder, scalar expressions, projections, rewrites
-- `codecs`: generic document parsing facade plus shared codec options and literal codec controls
-- `codecs/config`: lower-level codec configuration types, hooks, and default literal codecs
+- `codecs`: generic document parsing facade plus the stable codec options and literal codec controls
 - `codecs/jsoncodec`: JSON parse and ordered JSON emission
 - `codecs/yamlcodec`: YAML parse and ordered YAML emission
 - `codecs/querystring`: bracket-notation query-string parse and canonical encoding

@@ -5,7 +5,7 @@ import "github.com/pakasa-io/qb"
 type SQLiteDialect struct{}
 
 func (SQLiteDialect) spec() registeredDialect {
-	functions := map[string]FunctionCompiler{
+	functions := map[string]functionCompiler{
 		"count":             zeroOrOne("count", "COUNT"),
 		"sum":               exactArity("sum", "SUM", 1),
 		"avg":               exactArity("avg", "AVG", 1),
@@ -37,9 +37,9 @@ func (SQLiteDialect) spec() registeredDialect {
 		"current_time":      keyword("CURRENT_TIME"),
 		"localtimestamp":    localTimestampCompiler("sqlite"),
 		"current_timestamp": keyword("CURRENT_TIMESTAMP"),
-		"date_trunc":        unsupportedFunctionCompiler("sqlite", "date_trunc"),
-		"extract":           unsupportedFunctionCompiler("sqlite", "extract"),
-		"date_bin":          unsupportedFunctionCompiler("sqlite", "date_bin"),
+		"date_trunc":        unsupportedfunctionCompiler("sqlite", "date_trunc"),
+		"extract":           unsupportedfunctionCompiler("sqlite", "extract"),
+		"date_bin":          unsupportedfunctionCompiler("sqlite", "date_bin"),
 		"json_extract":      exactArity("json_extract", "json_extract", 2),
 		"json_query":        exactArity("json_query", "json_extract", 2),
 		"json_value":        exactArity("json_value", "json_extract", 2),
@@ -61,8 +61,8 @@ func (SQLiteDialect) spec() registeredDialect {
 		quote:              `"`,
 		placeholder:        func(int) string { return "?" },
 		functions:          functions,
-		cast:               castCompiler("sqlite"),
-		predicateCompilers: map[qb.Operator]PredicateCompiler{},
+		cast:               castCompilerForDialect("sqlite"),
+		predicateCompilers: map[qb.Operator]predicateCompiler{},
 		capabilities:       newCapabilities(functions, operators...),
 	}
 }

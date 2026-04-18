@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/pakasa-io/qb"
+	sqlrender "github.com/pakasa-io/qb/adapters/internal/sqlrender"
 )
 
 // Statement is a parameterized SQL fragment.
@@ -52,7 +53,7 @@ func WithQueryTransformer(transformer qb.QueryTransformer) Option {
 
 // Capabilities reports which query features the compiler supports.
 func (c Compiler) Capabilities() qb.Capabilities {
-	return NewRenderer(c.dialect, qb.StageCompile).Capabilities()
+	return c.dialect.Capabilities()
 }
 
 // Compile renders the query as a SQL fragment.
@@ -62,7 +63,7 @@ func (c Compiler) Compile(query qb.Query) (Statement, error) {
 		return Statement{}, qb.WrapError(err, qb.WithDefaultStage(qb.StageCompile))
 	}
 
-	renderer := NewRenderer(c.dialect, qb.StageCompile)
+	renderer := sqlrender.New(c.dialect, qb.StageCompile)
 	if err := renderer.Capabilities().Validate(qb.StageCompile, transformed); err != nil {
 		return Statement{}, err
 	}

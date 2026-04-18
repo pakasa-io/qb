@@ -7,7 +7,7 @@ import (
 	"github.com/pakasa-io/qb"
 )
 
-func keyword(sql string) FunctionCompiler {
+func keyword(sql string) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 0 {
 			return "", fmt.Errorf("keyword expression expects no arguments")
@@ -16,7 +16,7 @@ func keyword(sql string) FunctionCompiler {
 	}
 }
 
-func zeroOrOne(name, sql string) FunctionCompiler {
+func zeroOrOne(name, sql string) functionCompiler {
 	return func(args []string) (string, error) {
 		switch len(args) {
 		case 0:
@@ -29,7 +29,7 @@ func zeroOrOne(name, sql string) FunctionCompiler {
 	}
 }
 
-func exactArity(name, sql string, arity int) FunctionCompiler {
+func exactArity(name, sql string, arity int) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != arity {
 			return "", fmt.Errorf("function %q expects exactly %d argument(s)", name, arity)
@@ -38,7 +38,7 @@ func exactArity(name, sql string, arity int) FunctionCompiler {
 	}
 }
 
-func arityRange(name, sql string, min, max int) FunctionCompiler {
+func arityRange(name, sql string, min, max int) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) < min || len(args) > max {
 			if min == max {
@@ -50,7 +50,7 @@ func arityRange(name, sql string, min, max int) FunctionCompiler {
 	}
 }
 
-func variadic(name, sql string, min int) FunctionCompiler {
+func variadic(name, sql string, min int) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) < min {
 			return "", fmt.Errorf("function %q expects at least %d argument(s)", name, min)
@@ -59,13 +59,13 @@ func variadic(name, sql string, min int) FunctionCompiler {
 	}
 }
 
-func unsupportedFunctionCompiler(dialect, name string) FunctionCompiler {
+func unsupportedfunctionCompiler(dialect, name string) functionCompiler {
 	return func(args []string) (string, error) {
 		return "", qb.UnsupportedFunction("", dialect, name)
 	}
 }
 
-func concatCompiler(dialect string) FunctionCompiler {
+func concatCompiler(dialect string) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) == 0 {
 			return "", fmt.Errorf("function %q expects at least one argument", "concat")
@@ -77,7 +77,7 @@ func concatCompiler(dialect string) FunctionCompiler {
 	}
 }
 
-func substringCompiler(dialect string) FunctionCompiler {
+func substringCompiler(dialect string) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 2 && len(args) != 3 {
 			return "", fmt.Errorf("function %q expects two or three arguments", "substring")
@@ -90,21 +90,21 @@ func substringCompiler(dialect string) FunctionCompiler {
 	}
 }
 
-func ceilCompiler(dialect string) FunctionCompiler {
+func ceilCompiler(dialect string) functionCompiler {
 	if dialect == "sqlite" {
-		return unsupportedFunctionCompiler(dialect, "ceil")
+		return unsupportedfunctionCompiler(dialect, "ceil")
 	}
 	return exactArity("ceil", "CEIL", 1)
 }
 
-func floorCompiler(dialect string) FunctionCompiler {
+func floorCompiler(dialect string) functionCompiler {
 	if dialect == "sqlite" {
-		return unsupportedFunctionCompiler(dialect, "floor")
+		return unsupportedfunctionCompiler(dialect, "floor")
 	}
 	return exactArity("floor", "FLOOR", 1)
 }
 
-func modCompiler() FunctionCompiler {
+func modCompiler() functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 2 {
 			return "", fmt.Errorf("function %q expects exactly two arguments", "mod")
@@ -113,7 +113,7 @@ func modCompiler() FunctionCompiler {
 	}
 }
 
-func roundDoubleCompiler(dialect string) FunctionCompiler {
+func roundDoubleCompiler(dialect string) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 2 {
 			return "", fmt.Errorf("function %q expects exactly two arguments", "round_double")
@@ -127,7 +127,7 @@ func roundDoubleCompiler(dialect string) FunctionCompiler {
 	}
 }
 
-func leftCompiler(dialect string) FunctionCompiler {
+func leftCompiler(dialect string) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 2 {
 			return "", fmt.Errorf("function %q expects exactly two arguments", "left")
@@ -139,7 +139,7 @@ func leftCompiler(dialect string) FunctionCompiler {
 	}
 }
 
-func rightCompiler(dialect string) FunctionCompiler {
+func rightCompiler(dialect string) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 2 {
 			return "", fmt.Errorf("function %q expects exactly two arguments", "right")
@@ -151,7 +151,7 @@ func rightCompiler(dialect string) FunctionCompiler {
 	}
 }
 
-func nowCompiler(dialect string) FunctionCompiler {
+func nowCompiler(dialect string) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 0 {
 			return "", fmt.Errorf("function %q expects no arguments", "now")
@@ -163,7 +163,7 @@ func nowCompiler(dialect string) FunctionCompiler {
 	}
 }
 
-func localTimeCompiler(dialect string) FunctionCompiler {
+func localTimeCompiler(dialect string) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 0 {
 			return "", fmt.Errorf("function %q expects no arguments", "localtime")
@@ -175,7 +175,7 @@ func localTimeCompiler(dialect string) FunctionCompiler {
 	}
 }
 
-func localTimestampCompiler(dialect string) FunctionCompiler {
+func localTimestampCompiler(dialect string) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 0 {
 			return "", fmt.Errorf("function %q expects no arguments", "localtimestamp")
@@ -187,7 +187,7 @@ func localTimestampCompiler(dialect string) FunctionCompiler {
 	}
 }
 
-func postgresOnly(name, sql string, arity int) FunctionCompiler {
+func postgresOnly(name, sql string, arity int) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != arity {
 			return "", fmt.Errorf("function %q expects exactly %d argument(s)", name, arity)
@@ -196,7 +196,7 @@ func postgresOnly(name, sql string, arity int) FunctionCompiler {
 	}
 }
 
-func jsonArrayLengthPostgres() FunctionCompiler {
+func jsonArrayLengthPostgres() functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 1 && len(args) != 2 {
 			return "", fmt.Errorf("function %q expects one or two arguments", "json_array_length")
@@ -208,7 +208,7 @@ func jsonArrayLengthPostgres() FunctionCompiler {
 	}
 }
 
-func jsonTypePostgres() FunctionCompiler {
+func jsonTypePostgres() functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 1 && len(args) != 2 {
 			return "", fmt.Errorf("function %q expects one or two arguments", "json_type")
@@ -220,7 +220,7 @@ func jsonTypePostgres() FunctionCompiler {
 	}
 }
 
-func jsonObjectPostgres() FunctionCompiler {
+func jsonObjectPostgres() functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args)%2 != 0 {
 			return "", fmt.Errorf("function %q expects key/value pairs", "json_object")
@@ -236,7 +236,7 @@ func jsonObjectPostgres() FunctionCompiler {
 	}
 }
 
-func jsonExistsMySQL() FunctionCompiler {
+func jsonExistsMySQL() functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 2 {
 			return "", fmt.Errorf("function %q expects exactly two arguments", "json_exists")
@@ -245,7 +245,7 @@ func jsonExistsMySQL() FunctionCompiler {
 	}
 }
 
-func jsonExistsSQLite() FunctionCompiler {
+func jsonExistsSQLite() functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 2 {
 			return "", fmt.Errorf("function %q expects exactly two arguments", "json_exists")
@@ -254,7 +254,7 @@ func jsonExistsSQLite() FunctionCompiler {
 	}
 }
 
-func jsonTypeMySQL() FunctionCompiler {
+func jsonTypeMySQL() functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args) != 1 && len(args) != 2 {
 			return "", fmt.Errorf("function %q expects one or two arguments", "json_type")
@@ -266,7 +266,7 @@ func jsonTypeMySQL() FunctionCompiler {
 	}
 }
 
-func jsonObjectSimple(prefix string) FunctionCompiler {
+func jsonObjectSimple(prefix string) functionCompiler {
 	return func(args []string) (string, error) {
 		if len(args)%2 != 0 {
 			return "", fmt.Errorf("function %q expects key/value pairs", "json_object")
@@ -275,19 +275,19 @@ func jsonObjectSimple(prefix string) FunctionCompiler {
 	}
 }
 
-func regexOp(sql string) PredicateCompiler {
+func regexOp(sql string) predicateCompiler {
 	return func(left string, right string) (string, error) {
 		return left + " " + sql + " " + right, nil
 	}
 }
 
-func regexLikeMySQL() PredicateCompiler {
+func regexLikeMySQL() predicateCompiler {
 	return func(left string, right string) (string, error) {
 		return "REGEXP_LIKE(" + left + ", " + right + ")", nil
 	}
 }
 
-func castCompiler(dialect string) CastCompiler {
+func castCompilerForDialect(dialect string) castCompiler {
 	return func(expr string, typeName string) (string, error) {
 		typeName = strings.ToLower(strings.TrimSpace(typeName))
 		if expr == "" {

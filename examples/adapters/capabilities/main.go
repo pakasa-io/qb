@@ -16,7 +16,7 @@ func main() {
 	}
 
 	for _, dialect := range dialects {
-		capabilities := sqladapter.NewRenderer(dialect, qb.StageCompile).Capabilities()
+		capabilities := dialect.Capabilities()
 		fmt.Println(dialect.Name())
 		fmt.Println("  ilike:", capabilities.SupportsOperator(qb.OpILike))
 		fmt.Println("  regexp:", capabilities.SupportsOperator(qb.OpRegexp))

@@ -9,7 +9,7 @@ import (
 type PostgresDialect struct{}
 
 func (PostgresDialect) spec() registeredDialect {
-	functions := map[string]FunctionCompiler{
+	functions := map[string]functionCompiler{
 		"count":             zeroOrOne("count", "COUNT"),
 		"sum":               exactArity("sum", "SUM", 1),
 		"avg":               exactArity("avg", "AVG", 1),
@@ -65,8 +65,8 @@ func (PostgresDialect) spec() registeredDialect {
 		quote:       `"`,
 		placeholder: func(index int) string { return fmt.Sprintf("$%d", index) },
 		functions:   functions,
-		cast:        castCompiler("postgres"),
-		predicateCompilers: map[qb.Operator]PredicateCompiler{
+		cast:        castCompilerForDialect("postgres"),
+		predicateCompilers: map[qb.Operator]predicateCompiler{
 			qb.OpILike:  regexOp("ILIKE"),
 			qb.OpRegexp: regexOp("~"),
 		},

@@ -2,7 +2,7 @@ package codecs
 
 import (
 	"github.com/pakasa-io/qb"
-	codecconfig "github.com/pakasa-io/qb/codecs/config"
+	codecconfig "github.com/pakasa-io/qb/codecs/internal/config"
 	docmodel "github.com/pakasa-io/qb/codecs/internal/docmodel"
 )
 
@@ -11,7 +11,6 @@ type FilterFieldResolver = codecconfig.FilterFieldResolver
 type GroupFieldResolver = codecconfig.GroupFieldResolver
 type SortFieldResolver = codecconfig.SortFieldResolver
 type LiteralCodec = codecconfig.LiteralCodec
-type Config = codecconfig.Config
 type Option = codecconfig.Option
 type Mode = codecconfig.Mode
 type DefaultLiteralCodec = codecconfig.DefaultLiteralCodec
@@ -32,7 +31,6 @@ var (
 	WithSortFieldResolver               = codecconfig.WithSortFieldResolver
 	WithLiteralCodec                    = codecconfig.WithLiteralCodec
 	WithMode                            = codecconfig.WithMode
-	ApplyOptions                        = codecconfig.ApplyOptions
 	SetDefaultLiteralCodecMode          = codecconfig.SetDefaultLiteralCodecMode
 	DefaultLiteralCodecModeValue        = codecconfig.DefaultLiteralCodecModeValue
 	ResetDefaultLiteralCodecModeFromEnv = codecconfig.ResetDefaultLiteralCodecModeFromEnv
