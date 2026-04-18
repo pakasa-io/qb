@@ -75,10 +75,18 @@ func BuildDocument(query qb.Query, transport Transport, opts ...Option) (Ordered
 	}
 
 	if page != nil {
-		document = append(document, Member{Key: "$page", Value: encodeTransportLeaf(*page, transport, config, false)})
+		value, err := encodeTransportLeaf(*page, transport, config, false)
+		if err != nil {
+			return nil, err
+		}
+		document = append(document, Member{Key: "$page", Value: value})
 	}
 	if size != nil {
-		document = append(document, Member{Key: "$size", Value: encodeTransportLeaf(*size, transport, config, false)})
+		value, err := encodeTransportLeaf(*size, transport, config, false)
+		if err != nil {
+			return nil, err
+		}
+		document = append(document, Member{Key: "$size", Value: value})
 	}
 	if query.Cursor != nil {
 		value, err := encodeCursor(*query.Cursor, transport, config)
@@ -159,7 +167,11 @@ func encodeProjection(value qb.Projection, transport Transport, config options) 
 		return nil, err
 	}
 
-	object := OrderedObject{{Key: "$expr", Value: encodeStructuredScalar(value.Expr, transport, config)}}
+	expr, err := encodeStructuredScalar(value.Expr, transport, config)
+	if err != nil {
+		return nil, err
+	}
+	object := OrderedObject{{Key: "$expr", Value: expr}}
 	if value.Alias != "" {
 		object = append(object, Member{Key: "$as", Value: value.Alias})
 	}
@@ -210,8 +222,12 @@ func encodeSorts(values []qb.Sort, transport Transport, config options) (any, er
 		if err != dsl.ErrStructuredRequired {
 			return nil, err
 		}
+		expr, err := encodeStructuredScalar(sortValue.Expr, transport, config)
+		if err != nil {
+			return nil, err
+		}
 		out[i] = OrderedObject{
-			{Key: "$expr", Value: encodeStructuredScalar(sortValue.Expr, transport, config)},
+			{Key: "$expr", Value: expr},
 			{Key: "$dir", Value: string(defaultDirection(sortValue.Direction))},
 		}
 	}
@@ -220,7 +236,7 @@ func encodeSorts(values []qb.Sort, transport Transport, config options) (any, er
 
 func encodeCursor(cursor qb.Cursor, transport Transport, config options) (any, error) {
 	if cursor.Token != "" {
-		return encodeTransportLeaf(cursor.Token, transport, config, false), nil
+		return encodeTransportLeaf(cursor.Token, transport, config, false)
 	}
 	keys := make([]string, 0, len(cursor.Values))
 	for key := range cursor.Values {
@@ -230,9 +246,13 @@ func encodeCursor(cursor qb.Cursor, transport Transport, config options) (any, e
 
 	object := OrderedObject{}
 	for _, key := range keys {
+		value, err := encodeTransportLeaf(cursor.Values[key], transport, config, true)
+		if err != nil {
+			return nil, err
+		}
 		object = append(object, Member{
 			Key:   key,
-			Value: encodeTransportLeaf(cursor.Values[key], transport, config, true),
+			Value: value,
 		})
 	}
 	return object, nil
@@ -333,7 +353,10 @@ func encodeFieldPredicate(predicate qb.Predicate, transport Transport, config op
 		if transport == TransportQueryString && predicate.Op == qb.OpNe && literal.Value == nil {
 			return key, map[string]any{"$notnull": true}, true, nil
 		}
-		value := encodeTransportLeaf(literal.Value, transport, config, true)
+		value, err := encodeTransportLeaf(literal.Value, transport, config, true)
+		if err != nil {
+			return "", nil, true, err
+		}
 		switch predicate.Op {
 		case qb.OpEq:
 			return key, value, true, nil
@@ -347,7 +370,11 @@ func encodeFieldPredicate(predicate qb.Predicate, transport Transport, config op
 			if !ok {
 				return "", nil, false, nil
 			}
-			items[i] = encodeTransportLeaf(literal.Value, transport, config, true)
+			value, err := encodeTransportLeaf(literal.Value, transport, config, true)
+			if err != nil {
+				return "", nil, true, err
+			}
+			items[i] = value
 		}
 		return key, map[string]any{operatorToken(predicate.Op, transport, false): items}, true, nil
 	default:
@@ -426,69 +453,89 @@ func encodeScalar(expr qb.Scalar, transport Transport, config options, ctx dsl.C
 	if err != dsl.ErrStructuredRequired {
 		return nil, err
 	}
-	return encodeStructuredScalar(expr, transport, config), nil
+	return encodeStructuredScalar(expr, transport, config)
 }
 
-func encodeStructuredScalar(expr qb.Scalar, transport Transport, config options) any {
+func encodeStructuredScalar(expr qb.Scalar, transport Transport, config options) (any, error) {
 	switch typed := expr.(type) {
 	case qb.Ref:
-		return OrderedObject{{Key: "$field", Value: typed.Name}}
+		return OrderedObject{{Key: "$field", Value: typed.Name}}, nil
 	case qb.Literal:
-		literal, codec := encodeLiteralWrapper(typed.Value, transport, config, true)
+		literal, codec, err := encodeLiteralWrapper(typed.Value, transport, config)
+		if err != nil {
+			return nil, err
+		}
 		object := OrderedObject{{Key: "$literal", Value: literal}}
 		if codec != "" {
 			object = append(object, Member{Key: "$codec", Value: codec})
 		}
-		return object
+		return object, nil
 	case qb.Call:
 		args := make([]any, len(typed.Args))
 		for i, arg := range typed.Args {
-			args[i] = encodeStructuredScalar(arg, transport, config)
+			value, err := encodeStructuredScalar(arg, transport, config)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = value
 		}
 		object := OrderedObject{{Key: "$call", Value: typed.Name}}
 		if len(args) > 0 {
 			object = append(object, Member{Key: "$args", Value: args})
 		}
-		return object
+		return object, nil
 	case qb.Cast:
+		expr, err := encodeStructuredScalar(typed.Expr, transport, config)
+		if err != nil {
+			return nil, err
+		}
 		return OrderedObject{
 			{Key: "$cast", Value: typed.Type},
-			{Key: "$expr", Value: encodeStructuredScalar(typed.Expr, transport, config)},
-		}
+			{Key: "$expr", Value: expr},
+		}, nil
 	default:
-		return nil
+		return nil, fmt.Errorf("unsupported scalar %T", expr)
 	}
 }
 
-func encodeLiteralWrapper(value any, transport Transport, config options, structured bool) (any, string) {
+func encodeLiteralWrapper(value any, transport Transport, config options) (any, string, error) {
 	if config.literalCodec != nil {
 		literal, codec, handled, err := config.literalCodec.FormatLiteral(value)
-		if err == nil && handled {
+		if err != nil {
+			return nil, "", err
+		}
+		if handled {
 			if transport == TransportQueryString {
-				return fmt.Sprint(literal), codec
+				return fmt.Sprint(literal), codec, nil
 			}
-			return literal, codec
+			return literal, codec, nil
 		}
 	}
 	if transport == TransportQueryString {
-		return fmt.Sprint(value), ""
+		return fmt.Sprint(value), "", nil
 	}
-	return value, ""
+	return value, "", nil
 }
 
-func encodeTransportLeaf(value any, transport Transport, config options, preferWrapper bool) any {
+func encodeTransportLeaf(value any, transport Transport, config options, preferWrapper bool) (any, error) {
 	if transport == TransportQueryString {
-		literal, _ := encodeLiteralWrapper(value, transport, config, false)
-		return fmt.Sprint(literal)
+		literal, _, err := encodeLiteralWrapper(value, transport, config)
+		if err != nil {
+			return nil, err
+		}
+		return fmt.Sprint(literal), nil
 	}
-	literal, codec := encodeLiteralWrapper(value, transport, config, preferWrapper)
+	literal, codec, err := encodeLiteralWrapper(value, transport, config)
+	if err != nil {
+		return nil, err
+	}
 	if codec != "" && preferWrapper {
 		return OrderedObject{
 			{Key: "$literal", Value: literal},
 			{Key: "$codec", Value: codec},
-		}
+		}, nil
 	}
-	return literal
+	return literal, nil
 }
 
 func formatOptions(config options, ctx dsl.Context) dsl.FormatOptions {

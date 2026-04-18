@@ -1324,7 +1324,11 @@ func parseLiteralNode(node map[string]any, opts options, path string) (any, erro
 	if handled {
 		return parsed, nil
 	}
-	return value, nil
+	return nil, parseError(
+		fmt.Errorf("unsupported literal codec %q", codec),
+		qb.CodeInvalidInput,
+		qb.WithPath(path+".$codec"),
+	)
 }
 
 func parseCursorValue(value any, opts options, path string) (any, error) {
@@ -1394,6 +1398,6 @@ func literalTokenDecoder(codec LiteralCodec) dsl.LiteralTokenDecoder {
 		if handled {
 			return value, nil
 		}
-		return literal, nil
+		return nil, fmt.Errorf("unsupported literal codec %q", name)
 	}
 }

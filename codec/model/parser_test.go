@@ -375,6 +375,33 @@ func TestParseRejectsUnknownSortWrapperKey(t *testing.T) {
 	}
 }
 
+func TestParseRejectsUnsupportedLiteralCodecWrapper(t *testing.T) {
+	_, err := model.Parse(map[string]any{
+		"$where": map[string]any{
+			"created_at": map[string]any{
+				"$eq": map[string]any{
+					"$literal": "2026-04-18T00:00:00Z",
+					"$codec":   "bogus",
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected unsupported literal codec error")
+	}
+}
+
+func TestParseRejectsUnsupportedLiteralCodecToken(t *testing.T) {
+	_, err := model.Parse(map[string]any{
+		"$group": []any{
+			"!#:bogus:2026-04-18T00:00:00Z",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected unsupported literal codec token error")
+	}
+}
+
 func refName(expr qb.Scalar) string {
 	ref, ok := expr.(qb.Ref)
 	if !ok {
