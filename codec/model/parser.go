@@ -424,6 +424,9 @@ func parseComputedFilter(key string, node any, opts options, path string) (qb.Ex
 
 	switch typed := node.(type) {
 	case map[string]any:
+		if looksLikeLiteralNode(typed) {
+			return parsePredicate(left, qb.OpEq, typed, opts, path)
+		}
 		keys := sortedKeys(typed)
 		exprs := make([]qb.Expr, 0, len(keys))
 		for _, key := range keys {
