@@ -1,4 +1,4 @@
-package jsoncodec_test
+package codec_test
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/pakasa-io/qb"
-	sqladapter "github.com/pakasa-io/qb/adapters/sqladapter"
+	sqladapter "github.com/pakasa-io/qb/adapters/sql"
 	"github.com/pakasa-io/qb/codecs"
 	jsoncodec "github.com/pakasa-io/qb/codecs/jsoncodec"
 )

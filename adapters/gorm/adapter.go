@@ -1,4 +1,4 @@
-package gormadapter
+package adapter
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 
 	"github.com/pakasa-io/qb"
 	sqlrender "github.com/pakasa-io/qb/adapters/internal/sqlrender"
-	sqladapter "github.com/pakasa-io/qb/adapters/sqladapter"
+	sqladapter "github.com/pakasa-io/qb/adapters/sql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

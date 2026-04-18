@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/pakasa-io/qb"
-	gormadapter "github.com/pakasa-io/qb/adapters/gormadapter"
+	gormadapter "github.com/pakasa-io/qb/adapters/gorm"
 	"github.com/pakasa-io/qb/codecs"
 	"github.com/pakasa-io/qb/schema"
 	"gorm.io/driver/sqlite"

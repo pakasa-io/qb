@@ -1,11 +1,11 @@
-package sqladapter_test
+package adapter_test
 
 import (
 	"errors"
 	"testing"
 
 	"github.com/pakasa-io/qb"
-	sqladapter "github.com/pakasa-io/qb/adapters/sqladapter"
+	sqladapter "github.com/pakasa-io/qb/adapters/sql"
 )
 
 func TestCompile(t *testing.T) {

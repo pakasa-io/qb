@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	sqladapter "github.com/pakasa-io/qb/adapters/sqladapter"
+	sqladapter "github.com/pakasa-io/qb/adapters/sql"
 	yamlcodec "github.com/pakasa-io/qb/codecs/yamlcodec"
 )
 

@@ -1,4 +1,4 @@
-package sqladapter
+package adapter
 
 import (
 	"errors"
@@ -251,8 +251,8 @@ func TestDialectImplementationsAndCasts(t *testing.T) {
 	}
 
 	castTests := []struct {
-		dialect string
-		expr    string
+		dialect  string
+		expr     string
 		typeName string
 	}{
 		{"postgres", "score", "double"},

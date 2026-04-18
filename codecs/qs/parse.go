@@ -1,4 +1,4 @@
-package querystring
+package codec
 
 import (
 	"fmt"

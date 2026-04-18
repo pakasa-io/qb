@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/pakasa-io/qb"
-	sqladapter "github.com/pakasa-io/qb/adapters/sqladapter"
+	sqladapter "github.com/pakasa-io/qb/adapters/sql"
 	"github.com/pakasa-io/qb/codecs"
 	docmodel "github.com/pakasa-io/qb/codecs/internal/docmodel"
 )

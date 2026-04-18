@@ -5,7 +5,7 @@ import (
 	"sort"
 
 	"github.com/pakasa-io/qb"
-	gormadapter "github.com/pakasa-io/qb/adapters/gormadapter"
+	gormadapter "github.com/pakasa-io/qb/adapters/gorm"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )

@@ -1,4 +1,4 @@
-package jsoncodec
+package codec
 
 import (
 	"bytes"

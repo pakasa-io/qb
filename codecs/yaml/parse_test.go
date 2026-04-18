@@ -1,11 +1,11 @@
-package yamlcodec_test
+package codec_test
 
 import (
 	"errors"
 	"testing"
 
 	"github.com/pakasa-io/qb"
-	sqladapter "github.com/pakasa-io/qb/adapters/sqladapter"
+	sqladapter "github.com/pakasa-io/qb/adapters/sql"
 	yamlcodec "github.com/pakasa-io/qb/codecs/yamlcodec"
 )
 

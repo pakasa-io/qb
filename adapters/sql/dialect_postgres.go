@@ -1,4 +1,4 @@
-package sqladapter
+package adapter
 
 import (
 	"fmt"

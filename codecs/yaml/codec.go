@@ -1,4 +1,4 @@
-package yamlcodec
+package codec
 
 import (
 	"bytes"

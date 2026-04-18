@@ -1,4 +1,4 @@
-package gormadapter_test
+package adapter_test
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/pakasa-io/qb"
-	gormadapter "github.com/pakasa-io/qb/adapters/gormadapter"
+	gormadapter "github.com/pakasa-io/qb/adapters/gorm"
 	"github.com/pakasa-io/qb/schema"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
