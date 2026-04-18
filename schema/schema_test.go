@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/pakasa-io/qb"
-	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/codec/model"
+	sqladapter "github.com/pakasa-io/qb/adapters/sqladapter"
+	"github.com/pakasa-io/qb/codecs"
 	"github.com/pakasa-io/qb/schema"
 )
 
@@ -42,7 +42,7 @@ func TestSchemaDrivenParsingAndCompilation(t *testing.T) {
 		),
 	)
 
-	query, err := model.Parse(
+	query, err := codecs.Parse(
 		map[string]any{
 			"$where": map[string]any{
 				"state":  "active",
@@ -50,9 +50,9 @@ func TestSchemaDrivenParsingAndCompilation(t *testing.T) {
 			},
 			"$sort": "-createdAt",
 		},
-		model.WithFilterFieldResolver(userSchema.ResolveFilterField),
-		model.WithSortFieldResolver(userSchema.ResolveSortField),
-		model.WithValueDecoder(userSchema.DecodeValue),
+		codecs.WithFilterFieldResolver(userSchema.ResolveFilterField),
+		codecs.WithSortFieldResolver(userSchema.ResolveSortField),
+		codecs.WithValueDecoder(userSchema.DecodeValue),
 	)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
@@ -79,12 +79,12 @@ func TestSchemaDrivenGroupingDoesNotRequireSortableFields(t *testing.T) {
 		schema.Define("role", schema.Storage("users.role")),
 	)
 
-	query, err := model.Parse(
+	query, err := codecs.Parse(
 		map[string]any{
 			"$select": "state,role",
 			"$group":  "state,role",
 		},
-		model.WithGroupFieldResolver(userSchema.ResolveGroupField),
+		codecs.WithGroupFieldResolver(userSchema.ResolveGroupField),
 	)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)

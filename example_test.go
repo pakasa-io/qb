@@ -5,9 +5,9 @@ import (
 	"strconv"
 
 	"github.com/pakasa-io/qb"
-	gormadapter "github.com/pakasa-io/qb/adapter/gorm"
-	sqladapter "github.com/pakasa-io/qb/adapter/sql"
-	"github.com/pakasa-io/qb/codec/model"
+	gormadapter "github.com/pakasa-io/qb/adapters/gormadapter"
+	sqladapter "github.com/pakasa-io/qb/adapters/sqladapter"
+	"github.com/pakasa-io/qb/codecs"
 	"github.com/pakasa-io/qb/schema"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -58,12 +58,12 @@ func Example() {
 		"$size":  10,
 	}
 
-	query, err := model.Parse(
+	query, err := codecs.Parse(
 		payload,
-		model.WithFilterFieldResolver(userSchema.ResolveFilterField),
-		model.WithGroupFieldResolver(userSchema.ResolveGroupField),
-		model.WithSortFieldResolver(userSchema.ResolveSortField),
-		model.WithValueDecoder(userSchema.DecodeValue),
+		codecs.WithFilterFieldResolver(userSchema.ResolveFilterField),
+		codecs.WithGroupFieldResolver(userSchema.ResolveGroupField),
+		codecs.WithSortFieldResolver(userSchema.ResolveSortField),
+		codecs.WithValueDecoder(userSchema.DecodeValue),
 	)
 	if err != nil {
 		panic(err)

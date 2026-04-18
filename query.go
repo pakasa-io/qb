@@ -91,7 +91,7 @@ func (q Query) Clone() Query {
 }
 
 // ResolvedPagination returns the effective limit/offset after considering both
-// legacy limit/offset values and the newer page/size pagination model. Cursor
+// legacy limit/offset values and the newer page/size pagination codecs. Cursor
 // pagination uses size for the page size and must be rewritten into filters and
 // sorts by a query transformer.
 func (q Query) ResolvedPagination() (limit *int, offset *int, err error) {

@@ -10,27 +10,28 @@ ORMs.
 ## Package Layout
 
 - `qb`: query AST, fluent builder, scalar expressions, projections, rewrites
-- `codec/model`: shared document parsing, field resolvers, value decoding, literal codecs
-- `codec/json`: JSON parse and ordered JSON emission
-- `codec/yaml`: YAML parse and ordered YAML emission
-- `codec/querystring`: bracket-notation query-string parse and canonical encoding
+- `codecs`: generic document parsing facade plus shared codec options and literal codec controls
+- `codecs/config`: lower-level codec configuration types, hooks, and default literal codecs
+- `codecs/jsoncodec`: JSON parse and ordered JSON emission
+- `codecs/yamlcodec`: YAML parse and ordered YAML emission
+- `codecs/querystring`: bracket-notation query-string parse and canonical encoding
 - `schema`: optional aliasing, field policy, value decoding, and storage mapping
-- `adapter/sql`: compile to parameterized SQL with PostgreSQL, MySQL, and SQLite dialects
-- `adapter/gorm`: apply the same query AST to GORM chains
+- `adapters/sqladapter`: compile to parameterized SQL with PostgreSQL, MySQL, and SQLite dialects
+- `adapters/gormadapter`: apply the same query AST to GORM chains
 
 See:
 
 - [examples/README.md](examples/README.md) for runnable examples
-- [docs/EXAMPLES.md](docs/EXAMPLES.md) for a narrative guide
-- [docs/JSON_DSL_SPEC.md](docs/JSON_DSL_SPEC.md) for the canonical JSON spec
-- [docs/YAML_DSL_SPEC.md](docs/YAML_DSL_SPEC.md) for the semantically identical YAML spec
-- [docs/QUERYSTRING_DSL_SPEC.md](docs/QUERYSTRING_DSL_SPEC.md) for the semantically identical query-string spec
-- [docs/CODEC_MODEL_SPEC.md](docs/CODEC_MODEL_SPEC.md) for the planned shared codec model
-- [docs/CODEC_JSON_ENCODING_SPEC.md](docs/CODEC_JSON_ENCODING_SPEC.md) for the planned JSON output codec
-- [docs/CODEC_YAML_ENCODING_SPEC.md](docs/CODEC_YAML_ENCODING_SPEC.md) for the planned YAML output codec
-- [docs/CODEC_QUERYSTRING_ENCODING_SPEC.md](docs/CODEC_QUERYSTRING_ENCODING_SPEC.md) for the planned query-string output codec
+- [docs/guides/EXAMPLES.md](docs/guides/EXAMPLES.md) for a narrative guide
+- [docs/specs/JSON_DSL_SPEC.md](docs/specs/JSON_DSL_SPEC.md) for the canonical JSON spec
+- [docs/specs/YAML_DSL_SPEC.md](docs/specs/YAML_DSL_SPEC.md) for the semantically identical YAML spec
+- [docs/specs/QUERYSTRING_DSL_SPEC.md](docs/specs/QUERYSTRING_DSL_SPEC.md) for the semantically identical query-string spec
+- [docs/specs/CODEC_MODEL_SPEC.md](docs/specs/CODEC_MODEL_SPEC.md) for the planned shared codec model
+- [docs/specs/CODEC_JSON_ENCODING_SPEC.md](docs/specs/CODEC_JSON_ENCODING_SPEC.md) for the planned JSON output codec
+- [docs/specs/CODEC_YAML_ENCODING_SPEC.md](docs/specs/CODEC_YAML_ENCODING_SPEC.md) for the planned YAML output codec
+- [docs/specs/CODEC_QUERYSTRING_ENCODING_SPEC.md](docs/specs/CODEC_QUERYSTRING_ENCODING_SPEC.md) for the planned query-string output codec
 
-`adapter/sql` defaults to PostgreSQL v17+ syntax. You can change the process-wide
+`adapters/sqladapter` defaults to PostgreSQL v17+ syntax. You can change the process-wide
 default with `sqladapter.SetDefaultDialect(...)` or override it per compiler
 with `sqladapter.WithDialect(...)`.
 
