@@ -1,4 +1,4 @@
-package adapter
+package sql
 
 import "github.com/pakasa-io/qb"
 

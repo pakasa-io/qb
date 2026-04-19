@@ -1,4 +1,4 @@
-package codec
+package yaml
 
 import (
 	"fmt"

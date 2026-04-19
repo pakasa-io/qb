@@ -1,4 +1,4 @@
-package adapter_test
+package sql_test
 
 import (
 	"errors"

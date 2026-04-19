@@ -1,4 +1,4 @@
-package codec_test
+package yaml_test
 
 import (
 	"strings"

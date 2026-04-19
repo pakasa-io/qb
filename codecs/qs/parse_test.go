@@ -1,4 +1,4 @@
-package codec_test
+package qs_test
 
 import (
 	"net/url"

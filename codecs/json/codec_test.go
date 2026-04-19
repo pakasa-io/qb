@@ -1,4 +1,4 @@
-package codec_test
+package json_test
 
 import (
 	"errors"
