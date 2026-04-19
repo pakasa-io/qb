@@ -85,6 +85,10 @@ func TestParseReturnsStructuredError(t *testing.T) {
 	if diagnostic.Stage != qb.StageParse || diagnostic.Code != qb.CodeInvalidValue || diagnostic.Path != "$size" {
 		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
 	}
+
+	if diagnostic.Error() != `parse invalid_value path=$size: strconv.Atoi: parsing "not-a-number": invalid syntax` {
+		t.Fatalf("unexpected diagnostic message: %q", diagnostic.Error())
+	}
 }
 
 func TestParseSelectIncludeGroupAndPageSize(t *testing.T) {
@@ -271,6 +275,10 @@ func TestParseCursor(t *testing.T) {
 		t.Fatalf("unexpected cursor value: %#v", got)
 	}
 
+	if got := query.Cursor.Values["created_at"]; got != "2026-04-11T12:00:00Z" {
+		t.Fatalf("unexpected cursor timestamp: %#v", got)
+	}
+
 	limit, offset, err := query.ResolvedPagination()
 	if err != nil {
 		t.Fatalf("ResolvedPagination() error = %v", err)
@@ -285,121 +293,141 @@ func TestParseCursor(t *testing.T) {
 	}
 }
 
-func TestParseRejectsUnknownTopLevelKey(t *testing.T) {
-	_, err := docmodel.Parse(map[string]any{
-		"$select": "id",
-		"$pick":   "status",
-	})
-	if err == nil {
-		t.Fatal("expected unknown top-level key error")
-	}
-}
-
-func TestParseRejectsExpressionBearingStringSelect(t *testing.T) {
-	_, err := docmodel.Parse(map[string]any{
-		"$select": "lower(users.name) as normalized_name,users.age",
-	})
-	if err == nil {
-		t.Fatal("expected expression shorthand rejection")
-	}
-}
-
-func TestParseRejectsAliasesInGroup(t *testing.T) {
-	_, err := docmodel.Parse(map[string]any{
-		"$group": []any{"lower(users.name) as normalized_name"},
-	})
-	if err == nil {
-		t.Fatal("expected alias rejection in $group")
-	}
-}
-
-func TestParseRejectsCursorWithoutSize(t *testing.T) {
-	_, err := docmodel.Parse(map[string]any{
-		"$cursor": "opaque-cursor",
-	})
-	if err == nil {
-		t.Fatal("expected cursor without size error")
-	}
-}
-
-func TestParseRejectsInvalidIsNullOperand(t *testing.T) {
-	_, err := docmodel.Parse(map[string]any{
-		"$where": map[string]any{
-			"deleted_at": map[string]any{"$isnull": false},
-		},
-	})
-	if err == nil {
-		t.Fatal("expected invalid $isnull operand error")
-	}
-}
-
-func TestParseRejectsInvalidExprIsNullOperandCount(t *testing.T) {
-	_, err := docmodel.Parse(map[string]any{
-		"$where": map[string]any{
-			"$expr": map[string]any{
-				"$isnull": []any{"@users.deleted_at", "@users.archived_at"},
+func TestParseRejectsInvalidInputsWithStructuredDiagnostics(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       map[string]any
+		wantCode    qb.ErrorCode
+		wantPath    string
+		wantMessage string
+	}{
+		{
+			name: "unknown top-level key",
+			input: map[string]any{
+				"$select": "id",
+				"$pick":   "status",
 			},
+			wantCode:    qb.CodeInvalidInput,
+			wantPath:    "$pick",
+			wantMessage: `parse invalid_input path=$pick: unknown top-level key "$pick"`,
 		},
-	})
-	if err == nil {
-		t.Fatal("expected invalid $expr $isnull operand count error")
-	}
-}
-
-func TestParseRejectsUnknownProjectionWrapperKey(t *testing.T) {
-	_, err := docmodel.Parse(map[string]any{
-		"$select": []any{
-			map[string]any{
-				"$expr": "users.id",
-				"$as":   "id",
-				"$junk": true,
+		{
+			name: "expression in string select shorthand",
+			input: map[string]any{
+				"$select": "lower(users.name) as normalized_name,users.age",
 			},
+			wantCode:    qb.CodeInvalidInput,
+			wantPath:    "$select[0]",
+			wantMessage: "parse invalid_input path=$select[0]: simple list shorthand only supports field references",
 		},
-	})
-	if err == nil {
-		t.Fatal("expected unknown projection wrapper key error")
-	}
-}
-
-func TestParseRejectsUnknownSortWrapperKey(t *testing.T) {
-	_, err := docmodel.Parse(map[string]any{
-		"$sort": []any{
-			map[string]any{
-				"$expr": "users.name",
-				"$dir":  "asc",
-				"$junk": true,
+		{
+			name: "alias in group",
+			input: map[string]any{
+				"$group": []any{"lower(users.name) as normalized_name"},
 			},
+			wantCode:    qb.CodeInvalidInput,
+			wantPath:    "$group[0]",
+			wantMessage: `parse invalid_input path=$group[0]: unexpected token "as"`,
 		},
-	})
-	if err == nil {
-		t.Fatal("expected unknown sort wrapper key error")
-	}
-}
-
-func TestParseRejectsUnsupportedLiteralCodecWrapper(t *testing.T) {
-	_, err := docmodel.Parse(map[string]any{
-		"$where": map[string]any{
-			"created_at": map[string]any{
-				"$eq": map[string]any{
-					"$literal": "2026-04-18T00:00:00Z",
-					"$codec":   "bogus",
+		{
+			name: "cursor without size",
+			input: map[string]any{
+				"$cursor": "opaque-cursor",
+			},
+			wantCode:    qb.CodeInvalidQuery,
+			wantPath:    "",
+			wantMessage: "parse invalid_query: cursor requires size",
+		},
+		{
+			name: "invalid isnull operand",
+			input: map[string]any{
+				"$where": map[string]any{
+					"deleted_at": map[string]any{"$isnull": false},
 				},
 			},
+			wantCode:    qb.CodeInvalidInput,
+			wantPath:    "$where.deleted_at.$isnull",
+			wantMessage: "parse invalid_input path=$where.deleted_at.$isnull: unary null operators require true as the operand",
 		},
-	})
-	if err == nil {
-		t.Fatal("expected unsupported literal codec error")
+		{
+			name: "invalid expr isnull operand count",
+			input: map[string]any{
+				"$where": map[string]any{
+					"$expr": map[string]any{
+						"$isnull": []any{"@users.deleted_at", "@users.archived_at"},
+					},
+				},
+			},
+			wantCode:    qb.CodeInvalidInput,
+			wantPath:    "$where.$expr.$isnull",
+			wantMessage: "parse invalid_input path=$where.$expr.$isnull: expected exactly one operand",
+		},
+		{
+			name: "unknown projection wrapper key",
+			input: map[string]any{
+				"$select": []any{
+					map[string]any{
+						"$expr": "users.id",
+						"$as":   "id",
+						"$junk": true,
+					},
+				},
+			},
+			wantCode:    qb.CodeInvalidInput,
+			wantPath:    "$select[0].$junk",
+			wantMessage: `parse invalid_input path=$select[0].$junk: unknown key "$junk"`,
+		},
+		{
+			name: "unknown sort wrapper key",
+			input: map[string]any{
+				"$sort": []any{
+					map[string]any{
+						"$expr": "users.name",
+						"$dir":  "asc",
+						"$junk": true,
+					},
+				},
+			},
+			wantCode:    qb.CodeInvalidInput,
+			wantPath:    "$sort[0].$junk",
+			wantMessage: `parse invalid_input path=$sort[0].$junk: unknown key "$junk"`,
+		},
+		{
+			name: "unsupported literal codec wrapper",
+			input: map[string]any{
+				"$where": map[string]any{
+					"created_at": map[string]any{
+						"$eq": map[string]any{
+							"$literal": "2026-04-18T00:00:00Z",
+							"$codec":   "bogus",
+						},
+					},
+				},
+			},
+			wantCode:    qb.CodeInvalidInput,
+			wantPath:    "$where.created_at.$eq.$codec",
+			wantMessage: `parse invalid_input path=$where.created_at.$eq.$codec: unsupported literal codec "bogus"`,
+		},
+		{
+			name: "unsupported literal codec token",
+			input: map[string]any{
+				"$group": []any{"!#:bogus:2026-04-18T00:00:00Z"},
+			},
+			wantCode:    qb.CodeInvalidInput,
+			wantPath:    "$group[0]",
+			wantMessage: `parse invalid_input path=$group[0]: unsupported literal codec "bogus"`,
+		},
 	}
-}
 
-func TestParseRejectsUnsupportedLiteralCodecToken(t *testing.T) {
-	_, err := docmodel.Parse(map[string]any{
-		"$group": []any{
-			"!#:bogus:2026-04-18T00:00:00Z",
-		},
-	})
-	if err == nil {
-		t.Fatal("expected unsupported literal codec token error")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := docmodel.Parse(tc.input)
+			if err == nil {
+				t.Fatalf("expected %s to fail", tc.name)
+			}
+
+			assertParserDiagnostic(t, err, tc.wantCode, tc.wantPath, tc.wantMessage)
+		})
 	}
 }
 
@@ -424,5 +452,22 @@ func assertArgsEqual(t *testing.T, got []any, want []any) {
 		if got[i] != want[i] {
 			t.Fatalf("arg %d mismatch: want %#v, got %#v", i, want[i], got[i])
 		}
+	}
+}
+
+func assertParserDiagnostic(t *testing.T, err error, wantCode qb.ErrorCode, wantPath string, wantMessage string) {
+	t.Helper()
+
+	var diagnostic *qb.Error
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("expected qb.Error, got %T", err)
+	}
+
+	if diagnostic.Stage != qb.StageParse || diagnostic.Code != wantCode || diagnostic.Path != wantPath {
+		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+
+	if diagnostic.Error() != wantMessage {
+		t.Fatalf("unexpected diagnostic message: %q", diagnostic.Error())
 	}
 }

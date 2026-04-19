@@ -53,10 +53,8 @@ func TestCompileWithTransformer(t *testing.T) {
 
 	statement, err := sqladapter.New(
 		sqladapter.WithQueryTransformer(func(query qb.Query) (qb.Query, error) {
-			return qb.New().
-				Where(query.Filter).
-				SortBy("created_at", qb.Desc).
-				Query()
+			query.Sorts = append(query.Sorts, qb.Sort{Expr: qb.F("created_at"), Direction: qb.Desc})
+			return query, nil
 		}),
 	).Compile(query)
 	if err != nil {
@@ -66,6 +64,10 @@ func TestCompileWithTransformer(t *testing.T) {
 	wantSQL := `WHERE "status" = $1 ORDER BY "created_at" DESC`
 	if statement.SQL != wantSQL {
 		t.Fatalf("SQL mismatch\nwant: %s\ngot:  %s", wantSQL, statement.SQL)
+	}
+
+	if len(query.Sorts) != 0 {
+		t.Fatalf("expected transformer to operate on a clone, got %#v", query.Sorts)
 	}
 }
 
@@ -80,11 +82,18 @@ func TestCompileWithTransformerError(t *testing.T) {
 	wantErr := errors.New("boom")
 	_, err = sqladapter.New(
 		sqladapter.WithQueryTransformer(func(query qb.Query) (qb.Query, error) {
+			query.Sorts = append(query.Sorts, qb.Sort{Expr: qb.F("created_at"), Direction: qb.Desc})
 			return qb.Query{}, wantErr
 		}),
 	).Compile(query)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected transformer error, got %v", err)
+	}
+
+	assertCompilerDiagnostic(t, err, qb.StageCompile, "", "", "", "compile: boom")
+
+	if len(query.Sorts) != 0 {
+		t.Fatalf("expected failing transformer to leave original query untouched, got %#v", query.Sorts)
 	}
 }
 
@@ -107,9 +116,7 @@ func TestCompileReturnsStructuredError(t *testing.T) {
 		t.Fatalf("expected qb.Error, got %T", err)
 	}
 
-	if diagnostic.Stage != qb.StageCompile || diagnostic.Code != qb.CodeUnsupportedOperator {
-		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
-	}
+	assertCompilerDiagnostic(t, err, qb.StageCompile, qb.CodeUnsupportedOperator, "status", qb.Operator("bogus"), `compile unsupported_operator field=status op=bogus: operator "bogus" is not supported`)
 }
 
 func TestCompileSelectGroupByAndPageSize(t *testing.T) {
@@ -437,51 +444,79 @@ func TestCompileDialectSpecificPatternOperators(t *testing.T) {
 
 func TestCompileUnsupportedFunctionsAndOperators(t *testing.T) {
 	tests := []struct {
-		name    string
-		query   qb.Query
-		dialect sqladapter.Dialect
+		name         string
+		query        qb.Query
+		dialect      sqladapter.Dialect
+		wantCode     qb.ErrorCode
+		wantField    string
+		wantOperator qb.Operator
+		wantFunction string
+		wantMessage  string
 	}{
 		{
 			name: "ceil sqlite",
 			query: mustQuery(t, qb.New().
 				SelectExpr(qb.F("users.score").Ceil())),
-			dialect: sqladapter.SQLiteDialect{},
+			dialect:      sqladapter.SQLiteDialect{},
+			wantCode:     qb.CodeUnsupportedFunction,
+			wantFunction: "ceil",
+			wantMessage:  "compile unsupported_function fn=ceil: function is not supported by dialect sqlite",
 		},
 		{
 			name: "floor sqlite",
 			query: mustQuery(t, qb.New().
 				SelectExpr(qb.F("users.score").Floor())),
-			dialect: sqladapter.SQLiteDialect{},
+			dialect:      sqladapter.SQLiteDialect{},
+			wantCode:     qb.CodeUnsupportedFunction,
+			wantFunction: "floor",
+			wantMessage:  "compile unsupported_function fn=floor: function is not supported by dialect sqlite",
 		},
 		{
 			name: "ilike mysql",
 			query: mustQuery(t, qb.New().
 				Where(qb.F("users.name").ILike("jo%"))),
-			dialect: sqladapter.MySQLDialect{},
+			dialect:      sqladapter.MySQLDialect{},
+			wantCode:     qb.CodeUnsupportedOperator,
+			wantField:    "users.name",
+			wantOperator: qb.OpILike,
+			wantMessage:  `compile unsupported_operator field=users.name op=ilike: operator "ilike" is not supported`,
 		},
 		{
 			name: "regexp sqlite",
 			query: mustQuery(t, qb.New().
 				Where(qb.F("users.name").Regexp("jo.*"))),
-			dialect: sqladapter.SQLiteDialect{},
+			dialect:      sqladapter.SQLiteDialect{},
+			wantCode:     qb.CodeUnsupportedOperator,
+			wantField:    "users.name",
+			wantOperator: qb.OpRegexp,
+			wantMessage:  `compile unsupported_operator field=users.name op=regexp: operator "regexp" is not supported`,
 		},
 		{
 			name: "date_trunc mysql",
 			query: mustQuery(t, qb.New().
 				SelectExpr(qb.F("users.created_at").DateTrunc("day"))),
-			dialect: sqladapter.MySQLDialect{},
+			dialect:      sqladapter.MySQLDialect{},
+			wantCode:     qb.CodeUnsupportedFunction,
+			wantFunction: "date_trunc",
+			wantMessage:  "compile unsupported_function fn=date_trunc: function is not supported by dialect mysql",
 		},
 		{
 			name: "extract sqlite",
 			query: mustQuery(t, qb.New().
 				SelectExpr(qb.F("users.created_at").Extract("year"))),
-			dialect: sqladapter.SQLiteDialect{},
+			dialect:      sqladapter.SQLiteDialect{},
+			wantCode:     qb.CodeUnsupportedFunction,
+			wantFunction: "extract",
+			wantMessage:  "compile unsupported_function fn=extract: function is not supported by dialect sqlite",
 		},
 		{
 			name: "date_bin mysql",
 			query: mustQuery(t, qb.New().
 				SelectExpr(qb.DateBin("1 hour", qb.F("users.created_at"), qb.F("users.origin_at")))),
-			dialect: sqladapter.MySQLDialect{},
+			dialect:      sqladapter.MySQLDialect{},
+			wantCode:     qb.CodeUnsupportedFunction,
+			wantFunction: "date_bin",
+			wantMessage:  "compile unsupported_function fn=date_bin: function is not supported by dialect mysql",
 		},
 	}
 
@@ -497,15 +532,10 @@ func TestCompileUnsupportedFunctionsAndOperators(t *testing.T) {
 				t.Fatalf("expected qb.Error, got %T", err)
 			}
 
-			switch tt.name {
-			case "ilike mysql", "regexp sqlite":
-				if diagnostic.Code != qb.CodeUnsupportedOperator {
-					t.Fatalf("unexpected diagnostic: %+v", diagnostic)
-				}
-			default:
-				if diagnostic.Code != qb.CodeUnsupportedFunction {
-					t.Fatalf("unexpected diagnostic: %+v", diagnostic)
-				}
+			assertCompilerDiagnostic(t, err, qb.StageCompile, tt.wantCode, tt.wantField, tt.wantOperator, tt.wantMessage)
+
+			if diagnostic.Function != tt.wantFunction {
+				t.Fatalf("unexpected diagnostic function: %+v", diagnostic)
 			}
 		})
 	}
@@ -554,4 +584,21 @@ func mustQuery(t *testing.T, builder qb.Builder) qb.Query {
 	}
 
 	return query
+}
+
+func assertCompilerDiagnostic(t *testing.T, err error, wantStage qb.ErrorStage, wantCode qb.ErrorCode, wantField string, wantOperator qb.Operator, wantMessage string) {
+	t.Helper()
+
+	var diagnostic *qb.Error
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("expected qb.Error, got %T", err)
+	}
+
+	if diagnostic.Stage != wantStage || diagnostic.Code != wantCode || diagnostic.Field != wantField || diagnostic.Operator != wantOperator {
+		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+
+	if diagnostic.Error() != wantMessage {
+		t.Fatalf("unexpected diagnostic message: %q", diagnostic.Error())
+	}
 }

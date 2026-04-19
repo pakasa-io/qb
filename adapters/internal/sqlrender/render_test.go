@@ -139,70 +139,148 @@ func TestRendererCompilesListsAndExpressions(t *testing.T) {
 
 func TestRendererValidationAndFailurePaths(t *testing.T) {
 	renderer := New(fakeDialect{}, qb.StageCompile)
-
-	if _, _, _, err := renderer.CompileProjectionList([]qb.Projection{{}}, 1); err == nil {
-		t.Fatal("expected nil projection expression to fail")
+	tests := []struct {
+		name         string
+		compile      func() (string, []any, int, error)
+		wantCode     qb.ErrorCode
+		wantField    string
+		wantOperator qb.Operator
+		wantMessage  string
+	}{
+		{
+			name:        "nil projection expression",
+			compile:     func() (string, []any, int, error) { return renderer.CompileProjectionList([]qb.Projection{{}}, 1) },
+			wantCode:    qb.CodeInvalidQuery,
+			wantMessage: "compile invalid_query: select expression cannot be nil",
+		},
+		{
+			name:        "nil scalar expression",
+			compile:     func() (string, []any, int, error) { return renderer.CompileScalarList([]qb.Scalar{nil}, "group_by", 1) },
+			wantCode:    qb.CodeInvalidQuery,
+			wantMessage: "compile invalid_query: scalar expression cannot be nil",
+		},
+		{
+			name:        "nil sort expression",
+			compile:     func() (string, []any, int, error) { return renderer.CompileSorts([]qb.Sort{{Expr: nil}}, 1) },
+			wantCode:    qb.CodeInvalidQuery,
+			wantMessage: "compile invalid_query: sort expression cannot be nil",
+		},
+		{
+			name: "invalid sort direction",
+			compile: func() (string, []any, int, error) {
+				return renderer.CompileSorts([]qb.Sort{{Expr: qb.F("name"), Direction: qb.Direction("sideways")}}, 1)
+			},
+			wantCode:    qb.CodeInvalidQuery,
+			wantField:   "name",
+			wantMessage: `compile invalid_query field=name: unsupported sort direction "sideways"`,
+		},
+		{
+			name:        "empty group",
+			compile:     func() (string, []any, int, error) { return renderer.CompileExpr(qb.Group{Kind: qb.AndGroup}, 1) },
+			wantCode:    qb.CodeInvalidQuery,
+			wantMessage: "compile invalid_query: empty and group",
+		},
+		{
+			name: "empty IN list",
+			compile: func() (string, []any, int, error) {
+				return renderer.CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpIn, Right: qb.ListOperand{}}, 1)
+			},
+			wantCode:     qb.CodeInvalidValue,
+			wantField:    "name",
+			wantOperator: qb.OpIn,
+			wantMessage:  "compile invalid_value field=name op=in: in requires a non-empty list",
+		},
+		{
+			name: "LIKE list operand",
+			compile: func() (string, []any, int, error) {
+				return renderer.CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpLike, Right: qb.ListOperand{}}, 1)
+			},
+			wantCode:     qb.CodeInvalidValue,
+			wantField:    "name",
+			wantOperator: qb.OpLike,
+			wantMessage:  "compile invalid_value field=name op=like: like requires a scalar operand",
+		},
+		{
+			name: "dialect predicate compiler error",
+			compile: func() (string, []any, int, error) {
+				return renderer.CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpILike, Right: qb.ScalarOperand{Expr: qb.V("a")}}, 1)
+			},
+			wantCode:     qb.CodeInvalidQuery,
+			wantField:    "name",
+			wantOperator: qb.OpILike,
+			wantMessage:  "compile invalid_query field=name op=ilike: predicate failed",
+		},
+		{
+			name: "binary predicate with list operand",
+			compile: func() (string, []any, int, error) {
+				return renderer.CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpGt, Right: qb.ListOperand{Items: []qb.Scalar{qb.V(1)}}}, 1)
+			},
+			wantCode:     qb.CodeInvalidValue,
+			wantField:    "name",
+			wantOperator: qb.OpGt,
+			wantMessage:  "compile invalid_value field=name op=gt: gt requires a scalar operand",
+		},
+		{
+			name: "unsupported operator",
+			compile: func() (string, []any, int, error) {
+				return New(noopDialect{}, qb.StageCompile).CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpRegexp, Right: qb.ScalarOperand{Expr: qb.V("a")}}, 1)
+			},
+			wantCode:     qb.CodeUnsupportedOperator,
+			wantField:    "name",
+			wantOperator: qb.OpRegexp,
+			wantMessage:  `compile unsupported_operator field=name op=regexp: operator "regexp" is not supported`,
+		},
+		{
+			name: "nil right scalar",
+			compile: func() (string, []any, int, error) {
+				return renderer.CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpEq, Right: qb.ScalarOperand{Expr: nil}}, 1)
+			},
+			wantCode:    qb.CodeInvalidQuery,
+			wantMessage: "compile invalid_query: scalar expression cannot be nil",
+		},
+		{
+			name:        "nil scalar",
+			compile:     func() (string, []any, int, error) { return renderer.CompileScalar(nil, 1) },
+			wantCode:    qb.CodeInvalidQuery,
+			wantMessage: "compile invalid_query: scalar expression cannot be nil",
+		},
+		{
+			name:        "empty ref",
+			compile:     func() (string, []any, int, error) { return renderer.CompileScalar(qb.F(""), 1) },
+			wantCode:    qb.CodeInvalidQuery,
+			wantMessage: "compile invalid_query: field reference cannot be empty",
+		},
+		{
+			name:        "function compiler error",
+			compile:     func() (string, []any, int, error) { return renderer.CompileScalar(qb.Func("explode"), 1) },
+			wantCode:    qb.CodeInvalidQuery,
+			wantMessage: "compile invalid_query: explode failed",
+		},
+		{
+			name:        "cast compiler error",
+			compile:     func() (string, []any, int, error) { return renderer.CompileScalar(qb.F("score").Cast("bad"), 1) },
+			wantCode:    qb.CodeInvalidQuery,
+			wantMessage: "compile invalid_query: cast failed",
+		},
 	}
 
-	if _, _, _, err := renderer.CompileScalarList([]qb.Scalar{nil}, "group_by", 1); err == nil {
-		t.Fatal("expected nil scalar expression to fail")
-	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sql, args, nextArg, err := tc.compile()
+			if err == nil {
+				t.Fatalf("expected %s to fail", tc.name)
+			}
 
-	if _, _, _, err := renderer.CompileSorts([]qb.Sort{{Expr: nil}}, 1); err == nil {
-		t.Fatal("expected nil sort expression to fail")
-	}
+			if sql != "" || args != nil || nextArg != 1 {
+				t.Fatalf("expected no partial compile output, got sql=%q args=%#v next=%d", sql, args, nextArg)
+			}
 
-	if _, _, _, err := renderer.CompileSorts([]qb.Sort{{Expr: qb.F("name"), Direction: qb.Direction("sideways")}}, 1); err == nil {
-		t.Fatal("expected invalid sort direction to fail")
-	}
-
-	if _, _, _, err := renderer.CompileExpr(qb.Group{Kind: qb.AndGroup}, 1); err == nil {
-		t.Fatal("expected empty group to fail")
-	}
-
-	if _, _, _, err := renderer.CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpIn, Right: qb.ListOperand{}}, 1); err == nil {
-		t.Fatal("expected empty IN list to fail")
-	}
-
-	if _, _, _, err := renderer.CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpLike, Right: qb.ListOperand{}}, 1); err == nil {
-		t.Fatal("expected LIKE list operand to fail")
-	}
-
-	if _, _, _, err := renderer.CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpILike, Right: qb.ScalarOperand{Expr: qb.V("a")}}, 1); err == nil {
-		t.Fatal("expected dialect predicate compiler error")
-	}
-
-	if _, _, _, err := renderer.CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpGt, Right: qb.ListOperand{Items: []qb.Scalar{qb.V(1)}}}, 1); err == nil {
-		t.Fatal("expected binary predicate with list operand to fail")
-	}
-
-	noCapability := New(noopDialect{}, qb.StageCompile)
-	if _, _, _, err := noCapability.CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpRegexp, Right: qb.ScalarOperand{Expr: qb.V("a")}}, 1); err == nil {
-		t.Fatal("expected unsupported operator to fail")
-	}
-
-	if _, _, _, err := renderer.CompileExpr(qb.Predicate{Left: qb.F("name"), Op: qb.OpEq, Right: qb.ScalarOperand{Expr: nil}}, 1); err == nil {
-		t.Fatal("expected nil right scalar to fail")
-	}
-
-	if _, _, _, err := renderer.CompileScalar(nil, 1); err == nil {
-		t.Fatal("expected nil scalar to fail")
-	}
-
-	if _, _, _, err := renderer.CompileScalar(qb.F(""), 1); err == nil {
-		t.Fatal("expected empty ref to fail")
+			assertRendererDiagnostic(t, err, tc.wantCode, tc.wantField, tc.wantOperator, tc.wantMessage)
+		})
 	}
 
 	if sql, args, nextArg, err := renderer.CompileScalar(qb.V(nil), 3); err != nil || sql != "NULL" || len(args) != 0 || nextArg != 3 {
 		t.Fatalf("unexpected nil literal compile: sql=%q args=%#v next=%d err=%v", sql, args, nextArg, err)
-	}
-
-	if _, _, _, err := renderer.CompileScalar(qb.Func("explode"), 1); err == nil {
-		t.Fatal("expected function compiler error")
-	}
-
-	if _, _, _, err := renderer.CompileScalar(qb.F("score").Cast("bad"), 1); err == nil {
-		t.Fatal("expected cast compiler error")
 	}
 
 	if !operandIsNull(qb.ScalarOperand{Expr: qb.V(nil)}) || operandIsNull(qb.ListOperand{}) {
@@ -231,3 +309,20 @@ func (noopDialect) CompilePredicate(op qb.Operator, left string, right string) (
 	return "", false, nil
 }
 func (noopDialect) Capabilities() qb.Capabilities { return qb.Capabilities{} }
+
+func assertRendererDiagnostic(t *testing.T, err error, wantCode qb.ErrorCode, wantField string, wantOperator qb.Operator, wantMessage string) {
+	t.Helper()
+
+	var diagnostic *qb.Error
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("expected qb.Error, got %T", err)
+	}
+
+	if diagnostic.Stage != qb.StageCompile || diagnostic.Code != wantCode || diagnostic.Field != wantField || diagnostic.Operator != wantOperator {
+		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+
+	if diagnostic.Error() != wantMessage {
+		t.Fatalf("unexpected diagnostic message: %q", diagnostic.Error())
+	}
+}

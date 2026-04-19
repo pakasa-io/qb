@@ -50,6 +50,16 @@ func TestRewriteQuery(t *testing.T) {
 	if !ok || ref.Name != "status" {
 		t.Fatalf("expected rewritten field to be status, got %#v", first.Left)
 	}
+
+	originalGroup, ok := query.Filter.(qb.Group)
+	if !ok {
+		t.Fatalf("expected original filter to remain grouped, got %T", query.Filter)
+	}
+
+	originalFirst := originalGroup.Terms[0].(qb.Predicate)
+	if got := originalFirst.Left.(qb.Ref).Name; got != "state" {
+		t.Fatalf("expected RewriteQuery to preserve original filter, got %#v", query.Filter)
+	}
 }
 
 func TestCapabilitiesValidateStructuredError(t *testing.T) {
@@ -77,8 +87,12 @@ func TestCapabilitiesValidateStructuredError(t *testing.T) {
 		t.Fatalf("expected qb.Error, got %T", err)
 	}
 
-	if diagnostic.Stage != qb.StageCompile || diagnostic.Code != qb.CodeUnsupportedOperator {
+	if diagnostic.Stage != qb.StageCompile || diagnostic.Code != qb.CodeUnsupportedOperator || diagnostic.Field != "age" || diagnostic.Operator != qb.OpGt {
 		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+
+	if diagnostic.Error() != `compile unsupported_operator field=age op=gt: operator "gt" is not supported` {
+		t.Fatalf("unexpected diagnostic message: %q", diagnostic.Error())
 	}
 }
 
@@ -92,5 +106,10 @@ func TestTransformQueryReturnsUnderlyingError(t *testing.T) {
 	)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected transform error, got %v", err)
+	}
+
+	var diagnostic *qb.Error
+	if errors.As(err, &diagnostic) {
+		t.Fatalf("expected TransformQuery to return the underlying error directly, got %+v", diagnostic)
 	}
 }

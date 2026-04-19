@@ -39,6 +39,31 @@ $size: 10
 		t.Fatalf("unexpected projections: %#v", query.Projections)
 	}
 
+	if _, ok := query.Projections[0].Expr.(qb.Call); !ok {
+		t.Fatalf("expected first projection to be a function call, got %T", query.Projections[0].Expr)
+	}
+
+	if len(query.GroupBy) != 1 {
+		t.Fatalf("unexpected group expressions: %#v", query.GroupBy)
+	}
+
+	if _, ok := query.GroupBy[0].(qb.Call); !ok {
+		t.Fatalf("expected group expression to be a function call, got %T", query.GroupBy[0])
+	}
+
+	if len(query.Sorts) != 1 || query.Sorts[0].Direction != qb.Asc {
+		t.Fatalf("unexpected sorts: %#v", query.Sorts)
+	}
+
+	limit, offset, err := query.ResolvedPagination()
+	if err != nil {
+		t.Fatalf("ResolvedPagination() error = %v", err)
+	}
+
+	if limit == nil || *limit != 10 || offset == nil || *offset != 10 {
+		t.Fatalf("unexpected pagination: limit=%v offset=%v", limit, offset)
+	}
+
 	statement, err := sqladapter.New().Compile(query)
 	if err != nil {
 		t.Fatalf("Compile() error = %v", err)
@@ -56,6 +81,19 @@ func TestParseRejectsNonObjectRoot(t *testing.T) {
 	_, err := yamlcodec.Parse([]byte(`- users.id`))
 	if err == nil {
 		t.Fatal("expected root object error")
+	}
+
+	var diagnostic *qb.Error
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("expected qb.Error, got %T", err)
+	}
+
+	if diagnostic.Stage != qb.StageParse || diagnostic.Code != qb.CodeInvalidInput {
+		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+
+	if diagnostic.Error() != "parse invalid_input: expected YAML document root to be an object" {
+		t.Fatalf("unexpected diagnostic message: %q", diagnostic.Error())
 	}
 }
 
@@ -84,5 +122,9 @@ func TestParseYAMLReturnsStructuredError(t *testing.T) {
 
 	if diagnostic.Stage != qb.StageParse || diagnostic.Code != qb.CodeInvalidValue || diagnostic.Path != "$size" {
 		t.Fatalf("unexpected diagnostic: %+v", diagnostic)
+	}
+
+	if diagnostic.Error() != `parse invalid_value path=$size: strconv.Atoi: parsing "nope": invalid syntax` {
+		t.Fatalf("unexpected diagnostic message: %q", diagnostic.Error())
 	}
 }
