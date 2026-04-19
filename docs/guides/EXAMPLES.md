@@ -2,12 +2,13 @@
 
 This guide shows the current canonical `qb` model after the transport refactor:
 
+For the staged guide set, start with [README.md](./README.md). For runnable
+programs, see [examples/README.md](../../examples/README.md).
+
 1. build a `qb.Query` directly with the fluent builder, or
 2. parse the same semantic model from JSON, YAML, or query strings, then
 3. normalize/rewrite it, and
-4. hand it to `adapters/sqladapter` or `adapters/gormadapter`.
-
-For runnable programs, see [examples/README.md](../examples/README.md).
+4. hand it to `adapters/sql` or `adapters/gorm`.
 
 ## 1. Fluent Builder
 
@@ -33,7 +34,7 @@ if err != nil {
 
 ## 2. JSON / Map Input
 
-`codecs/internal/docmodel` accepts normalized `$...` documents, while `codecs/jsoncodec` parses
+`codecs/internal/docmodel` accepts normalized `$...` documents, while `codecs/json` parses
 the same shape from JSON bytes.
 
 ```json
@@ -84,7 +85,7 @@ Rules:
 
 ## 3. YAML Input
 
-`codecs/yamlcodec` is semantically identical to the JSON/model layer. YAML is just
+`codecs/yaml` is semantically identical to the JSON/model layer. YAML is just
 another serialization of the same model.
 
 ```yaml
@@ -113,7 +114,7 @@ YAML implicit typing surprises.
 
 ## 4. Query-String Input
 
-`codecs/querystring` maps bracket-notation query params onto the same semantic
+`codecs/qs` maps bracket-notation query params onto the same semantic
 envelope.
 
 ```go
@@ -144,7 +145,7 @@ same as JSON or YAML would produce.
 Nested boolean logic is still JSON/YAML-native:
 
 ```go
-query, err := model.Parse(map[string]any{
+query, err := codecs.Parse(map[string]any{
 	"$where": map[string]any{
 		"$or": []any{
 			map[string]any{
@@ -166,7 +167,7 @@ query, err := model.Parse(map[string]any{
 Use `$expr` when either side is a computed expression:
 
 ```go
-query, err := model.Parse(map[string]any{
+query, err := codecs.Parse(map[string]any{
 	"$where": map[string]any{
 		"$expr": map[string]any{
 			"$gte": []any{"round(@users.age::decimal, 2)", 18},
@@ -204,7 +205,7 @@ userSchema := schema.MustNew(
 	),
 )
 
-query, err := model.Parse(
+query, err := codecs.Parse(
 	map[string]any{
 		"$select": "state",
 		"$where": map[string]any{
@@ -212,10 +213,10 @@ query, err := model.Parse(
 			"minAge": map[string]any{"$gte": "21"},
 		},
 	},
-	model.WithFilterFieldResolver(userSchema.ResolveFilterField),
-	model.WithGroupFieldResolver(userSchema.ResolveGroupField),
-	model.WithSortFieldResolver(userSchema.ResolveSortField),
-	model.WithValueDecoder(userSchema.DecodeValue),
+	codecs.WithFilterFieldResolver(userSchema.ResolveFilterField),
+	codecs.WithGroupFieldResolver(userSchema.ResolveGroupField),
+	codecs.WithSortFieldResolver(userSchema.ResolveSortField),
+	codecs.WithValueDecoder(userSchema.DecodeValue),
 )
 if err != nil {
 	panic(err)
@@ -258,7 +259,7 @@ query, err := qb.New().
 Cursor pagination in the core is metadata plus a rewrite step:
 
 ```go
-query, err := model.Parse(map[string]any{
+query, err := codecs.Parse(map[string]any{
 	"$cursor": map[string]any{
 		"created_at": "2026-04-11T12:00:00Z",
 		"id":         981,
@@ -306,7 +307,7 @@ The parsers can express the same model with the DSL:
 Parser, schema, and adapter failures return structured `qb.Error` values.
 
 ```go
-_, err := model.Parse(map[string]any{
+_, err := codecs.Parse(map[string]any{
 	"$size": "not-a-number",
 })
 

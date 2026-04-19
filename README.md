@@ -11,15 +11,16 @@ ORMs.
 
 - `qb`: query AST, fluent builder, scalar expressions, projections, rewrites
 - `codecs`: generic document parsing facade plus the stable codec options and literal codec controls
-- `codecs/jsoncodec`: JSON parse and ordered JSON emission
-- `codecs/yamlcodec`: YAML parse and ordered YAML emission
-- `codecs/querystring`: bracket-notation query-string parse and canonical encoding
+- `codecs/json`: JSON parse and ordered JSON emission
+- `codecs/yaml`: YAML parse and ordered YAML emission
+- `codecs/qs`: bracket-notation query-string parse and canonical encoding
 - `schema`: optional aliasing, field policy, value decoding, and storage mapping
-- `adapters/sqladapter`: compile to parameterized SQL with PostgreSQL, MySQL, and SQLite dialects
-- `adapters/gormadapter`: apply the same query AST to GORM chains
+- `adapters/sql`: compile to parameterized SQL with PostgreSQL, MySQL, and SQLite dialects
+- `adapters/gorm`: apply the same query AST to GORM chains
 
 See:
 
+- [docs/guides/README.md](docs/guides/README.md) for the staged guide path from basic to complex usage
 - [examples/README.md](examples/README.md) for runnable examples
 - [docs/guides/EXAMPLES.md](docs/guides/EXAMPLES.md) for a narrative guide
 - [docs/specs/JSON_DSL_SPEC.md](docs/specs/JSON_DSL_SPEC.md) for the canonical JSON spec
@@ -30,7 +31,7 @@ See:
 - [docs/specs/CODEC_YAML_ENCODING_SPEC.md](docs/specs/CODEC_YAML_ENCODING_SPEC.md) for the planned YAML output codec
 - [docs/specs/CODEC_QUERYSTRING_ENCODING_SPEC.md](docs/specs/CODEC_QUERYSTRING_ENCODING_SPEC.md) for the planned query-string output codec
 
-`adapters/sqladapter` defaults to PostgreSQL v17+ syntax. You can change the process-wide
+`adapters/sql` defaults to PostgreSQL v17+ syntax. You can change the process-wide
 default with `sqladapter.SetDefaultDialect(...)` or override it per compiler
 with `sqladapter.WithDialect(...)`.
 
@@ -82,7 +83,7 @@ payload := map[string]any{
 	"$size":  20,
 }
 
-query, err := model.Parse(payload)
+query, err := codecs.Parse(payload)
 ```
 
 Canonical top-level keys are:
@@ -160,7 +161,7 @@ userSchema := schema.MustNew(
 	schema.Define("created_at", schema.Storage("users.created_at"), schema.Aliases("createdAt"), schema.Sortable()),
 )
 
-query, err := model.Parse(
+query, err := codecs.Parse(
 	map[string]any{
 		"$select": "state",
 		"$where": map[string]any{
@@ -169,10 +170,10 @@ query, err := model.Parse(
 		},
 		"$sort": "-createdAt",
 	},
-	model.WithFilterFieldResolver(userSchema.ResolveFilterField),
-	model.WithGroupFieldResolver(userSchema.ResolveGroupField),
-	model.WithSortFieldResolver(userSchema.ResolveSortField),
-	model.WithValueDecoder(userSchema.DecodeValue),
+	codecs.WithFilterFieldResolver(userSchema.ResolveFilterField),
+	codecs.WithGroupFieldResolver(userSchema.ResolveGroupField),
+	codecs.WithSortFieldResolver(userSchema.ResolveSortField),
+	codecs.WithValueDecoder(userSchema.DecodeValue),
 )
 if err != nil {
 	panic(err)
