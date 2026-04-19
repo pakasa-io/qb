@@ -1,6 +1,7 @@
 package qb_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/pakasa-io/qb"
@@ -119,12 +120,25 @@ func TestBuilderRejectsNegativeLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected negative limit error")
 	}
+
+	if err.Error() != "qb: limit cannot be negative" {
+		t.Fatalf("unexpected error message: %v", err)
+	}
 }
 
 func TestBuilderRejectsPageWithoutSize(t *testing.T) {
 	_, err := qb.New().Page(2).Query()
 	if err == nil {
 		t.Fatal("expected page without size error")
+	}
+
+	var diagnostic *qb.Error
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("expected structured pagination error, got %T", err)
+	}
+
+	if diagnostic.Code != qb.CodeInvalidQuery || diagnostic.Error() != "invalid_query: page requires size" {
+		t.Fatalf("unexpected pagination diagnostic: %+v", diagnostic)
 	}
 }
 
@@ -167,6 +181,15 @@ func TestBuilderRejectsCursorWithoutSize(t *testing.T) {
 	_, err := qb.New().CursorToken("opaque-cursor").Query()
 	if err == nil {
 		t.Fatal("expected cursor without size error")
+	}
+
+	var diagnostic *qb.Error
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("expected structured pagination error, got %T", err)
+	}
+
+	if diagnostic.Code != qb.CodeInvalidQuery || diagnostic.Error() != "invalid_query: cursor requires size" {
+		t.Fatalf("unexpected pagination diagnostic: %+v", diagnostic)
 	}
 }
 
@@ -212,6 +235,103 @@ func TestBuilderSupportsFunctionExpressions(t *testing.T) {
 
 	if _, ok := predicate.Right.(qb.ScalarOperand); !ok {
 		t.Fatalf("expected scalar operand, got %T", predicate.Right)
+	}
+}
+
+func TestBuilderWhereIgnoresNilAndAccumulatesFilters(t *testing.T) {
+	query, err := qb.New().
+		Where(nil).
+		Where(qb.F("status").Eq("active")).
+		Where(qb.F("role").Eq("admin")).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	group, ok := query.Filter.(qb.Group)
+	if !ok {
+		t.Fatalf("expected grouped filter, got %T", query.Filter)
+	}
+
+	if group.Kind != qb.AndGroup || len(group.Terms) != 2 {
+		t.Fatalf("unexpected accumulated filter: %#v", group)
+	}
+
+	first, ok := group.Terms[0].(qb.Predicate)
+	if !ok {
+		t.Fatalf("expected first term to be predicate, got %T", group.Terms[0])
+	}
+
+	second, ok := group.Terms[1].(qb.Predicate)
+	if !ok {
+		t.Fatalf("expected second term to be predicate, got %T", group.Terms[1])
+	}
+
+	if refName(first.Left) != "status" || refName(second.Left) != "role" {
+		t.Fatalf("unexpected filter terms: %#v", group.Terms)
+	}
+}
+
+func TestBuilderClonesCallerOwnedInputs(t *testing.T) {
+	nameExpr := qb.Concat(qb.F("first_name"), " ", qb.F("last_name"))
+	cursorValues := map[string]any{
+		"id":    981,
+		"token": "before",
+	}
+
+	query, err := qb.New().
+		SelectExpr(nameExpr).
+		SortByExpr(nameExpr, qb.Desc).
+		Size(10).
+		CursorValues(cursorValues).
+		Query()
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	nameExpr.Args[0] = qb.F("mutated")
+	cursorValues["id"] = 0
+	cursorValues["token"] = "after"
+
+	selectCall, ok := query.Projections[0].Expr.(qb.Call)
+	if !ok {
+		t.Fatalf("expected projected call, got %T", query.Projections[0].Expr)
+	}
+
+	sortCall, ok := query.Sorts[0].Expr.(qb.Call)
+	if !ok {
+		t.Fatalf("expected sort call, got %T", query.Sorts[0].Expr)
+	}
+
+	if refName(selectCall.Args[0]) != "first_name" || refName(sortCall.Args[0]) != "first_name" {
+		t.Fatalf("builder retained caller-owned scalar slices: select=%#v sort=%#v", selectCall, sortCall)
+	}
+
+	if query.Cursor == nil {
+		t.Fatal("expected cursor metadata")
+	}
+
+	if got := query.Cursor.Values["id"]; got != 981 {
+		t.Fatalf("cursor value changed with caller mutation: %#v", got)
+	}
+
+	if got := query.Cursor.Values["token"]; got != "before" {
+		t.Fatalf("cursor token changed with caller mutation: %#v", got)
+	}
+}
+
+func TestBuilderPreservesFirstError(t *testing.T) {
+	_, err := qb.New().
+		Limit(-1).
+		Select("id").
+		Page(2).
+		Query()
+	if err == nil {
+		t.Fatal("expected builder error")
+	}
+
+	if err.Error() != "qb: limit cannot be negative" {
+		t.Fatalf("expected first validation error to win, got %v", err)
 	}
 }
 

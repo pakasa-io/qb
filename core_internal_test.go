@@ -102,25 +102,44 @@ func TestQueryPaginationAndTransformers(t *testing.T) {
 	}
 
 	tests := []struct {
-		name  string
-		query Query
+		name        string
+		query       Query
+		wantMessage string
 	}{
-		{name: "page and cursor", query: Query{Page: intPtr(1), Size: intPtr(10), Cursor: &Cursor{Token: "x"}}},
-		{name: "cursor and limit", query: Query{Cursor: &Cursor{Token: "x"}, Size: intPtr(10), Limit: intPtr(5)}},
-		{name: "page and limit", query: Query{Page: intPtr(1), Size: intPtr(10), Limit: intPtr(5)}},
-		{name: "size and limit", query: Query{Size: intPtr(10), Limit: intPtr(5)}},
-		{name: "page without size", query: Query{Page: intPtr(2)}},
-		{name: "cursor without size", query: Query{Cursor: &Cursor{Token: "x"}}},
-		{name: "page less than one", query: Query{Page: intPtr(0), Size: intPtr(10)}},
-		{name: "size less than one", query: Query{Size: intPtr(0)}},
-		{name: "negative limit", query: Query{Limit: intPtr(-1)}},
-		{name: "negative offset", query: Query{Offset: intPtr(-1)}},
+		{name: "page and cursor", query: Query{Page: intPtr(1), Size: intPtr(10), Cursor: &Cursor{Token: "x"}}, wantMessage: "page and cursor cannot be combined"},
+		{name: "cursor and limit", query: Query{Cursor: &Cursor{Token: "x"}, Size: intPtr(10), Limit: intPtr(5)}, wantMessage: "cursor cannot be combined with limit/offset; use size"},
+		{name: "page and limit", query: Query{Page: intPtr(1), Size: intPtr(10), Limit: intPtr(5)}, wantMessage: "page/size cannot be combined with limit/offset"},
+		{name: "size and limit", query: Query{Size: intPtr(10), Limit: intPtr(5)}, wantMessage: "page/size cannot be combined with limit/offset"},
+		{name: "page without size", query: Query{Page: intPtr(2)}, wantMessage: "page requires size"},
+		{name: "cursor without size", query: Query{Cursor: &Cursor{Token: "x"}}, wantMessage: "cursor requires size"},
+		{name: "page less than one", query: Query{Page: intPtr(0), Size: intPtr(10)}, wantMessage: "page must be greater than or equal to 1"},
+		{name: "size less than one", query: Query{Size: intPtr(0)}, wantMessage: "size must be greater than or equal to 1"},
+		{name: "negative limit", query: Query{Limit: intPtr(-1)}, wantMessage: "limit cannot be negative"},
+		{name: "negative offset", query: Query{Offset: intPtr(-1)}, wantMessage: "offset cannot be negative"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := tc.query.ResolvedPagination(); err == nil {
+			_, _, err := tc.query.ResolvedPagination()
+			if err == nil {
 				t.Fatalf("expected error for %s", tc.name)
+			}
+
+			var diagnostic *Error
+			if !errors.As(err, &diagnostic) {
+				t.Fatalf("expected structured pagination error, got %T", err)
+			}
+
+			if diagnostic.Code != CodeInvalidQuery {
+				t.Fatalf("expected invalid_query code, got %+v", diagnostic)
+			}
+
+			if diagnostic.Error() != "invalid_query: "+tc.wantMessage {
+				t.Fatalf("unexpected pagination message: %q", diagnostic.Error())
+			}
+
+			if !errors.Is(err, ErrInvalidPagination(tc.wantMessage)) {
+				t.Fatalf("expected invalid pagination sentinel, got %v", err)
 			}
 		})
 	}
@@ -163,6 +182,30 @@ func TestQueryPaginationAndTransformers(t *testing.T) {
 
 	if got := ErrInvalidPagination("bad").Error(); got != "bad" {
 		t.Fatalf("unexpected ErrInvalidPagination message: %q", got)
+	}
+
+	wantStop := errors.New("stop transformers")
+	ranAfterError := false
+	if _, err := TransformQuery(
+		original,
+		func(query Query) (Query, error) {
+			query.Projections[0] = Project(F("broken"))
+			return query, wantStop
+		},
+		func(query Query) (Query, error) {
+			ranAfterError = true
+			return query, nil
+		},
+	); !errors.Is(err, wantStop) {
+		t.Fatalf("expected first transformer error, got %v", err)
+	}
+
+	if ranAfterError {
+		t.Fatal("expected TransformQuery to stop after first transformer error")
+	}
+
+	if got := original.Projections[0].Expr.(Ref).Name; got != "status" || original.Includes[0] != "orders" {
+		t.Fatalf("expected TransformQuery error path to leave input untouched, got %#v", original)
 	}
 }
 
@@ -489,5 +532,154 @@ func TestScalarsOperandsAndHelpers(t *testing.T) {
 
 	if cloned := CloneExpr(customExpr{}); reflect.TypeOf(cloned) != reflect.TypeOf(customExpr{}) {
 		t.Fatalf("unexpected CloneExpr() passthrough: %#v", cloned)
+	}
+}
+
+func TestRewriteQueryAndWalkQueryScalarsAreDefensive(t *testing.T) {
+	query := Query{
+		Projections: []Projection{Project(F("id"))},
+		GroupBy:     []Scalar{F("tenant_id")},
+		Sorts:       []Sort{{Expr: F("created_at"), Direction: Desc}},
+		Filter: And(
+			F("role").In("admin", "owner"),
+			F("status").Eq("active"),
+		),
+	}
+
+	rewritten, err := RewriteQuery(query, func(expr Expr) (Expr, error) {
+		predicate, ok := expr.(Predicate)
+		if !ok {
+			return expr, nil
+		}
+
+		if field, ok := SingleRef(predicate.Left); ok && field == "status" {
+			predicate.Left = F("state")
+		}
+
+		return predicate, nil
+	})
+	if err != nil {
+		t.Fatalf("RewriteQuery() error = %v", err)
+	}
+
+	rewrittenFilter := rewritten.Filter.(Group)
+	if got := rewrittenFilter.Terms[1].(Predicate).Left.(Ref).Name; got != "state" {
+		t.Fatalf("unexpected rewritten filter: %#v", rewritten.Filter)
+	}
+
+	rewritten.Projections[0] = Project(F("mutated"))
+	rewritten.Sorts[0].Expr = F("mutated")
+
+	originalFilter := query.Filter.(Group)
+	if got := originalFilter.Terms[1].(Predicate).Left.(Ref).Name; got != "status" {
+		t.Fatalf("expected RewriteQuery to preserve original filter, got %#v", query.Filter)
+	}
+
+	if got := query.Projections[0].Expr.(Ref).Name; got != "id" {
+		t.Fatalf("expected RewriteQuery to preserve original projections, got %#v", query.Projections)
+	}
+
+	if got := query.Sorts[0].Expr.(Ref).Name; got != "created_at" {
+		t.Fatalf("expected RewriteQuery to preserve original sorts, got %#v", query.Sorts)
+	}
+
+	var visited []string
+	if err := WalkQueryScalars(query, func(expr Scalar) error {
+		switch typed := expr.(type) {
+		case Ref:
+			visited = append(visited, "ref:"+typed.Name)
+		case Literal:
+			visited = append(visited, fmt.Sprintf("lit:%v", typed.Value))
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("WalkQueryScalars() error = %v", err)
+	}
+
+	wantVisited := []string{
+		"ref:id",
+		"ref:tenant_id",
+		"ref:created_at",
+		"ref:role",
+		"lit:admin",
+		"lit:owner",
+		"ref:status",
+		"lit:active",
+	}
+	if !reflect.DeepEqual(visited, wantVisited) {
+		t.Fatalf("unexpected scalar visit order: %#v", visited)
+	}
+
+	wantStop := errors.New("stop walk")
+	if err := WalkQueryScalars(query, func(expr Scalar) error {
+		literal, ok := expr.(Literal)
+		if ok && literal.Value == "owner" {
+			return wantStop
+		}
+		return nil
+	}); !errors.Is(err, wantStop) {
+		t.Fatalf("expected walk to stop at list operand item, got %v", err)
+	}
+}
+
+func TestRewriteOperandAndExprEdgeCases(t *testing.T) {
+	operand := ListOperand{Items: []Scalar{F("role"), Lower(F("status"))}}
+	rewrittenOperand, err := RewriteOperand(operand, func(expr Scalar) (Scalar, error) {
+		ref, ok := expr.(Ref)
+		if !ok {
+			return expr, nil
+		}
+		return F(ref.Name + "_rewritten"), nil
+	})
+	if err != nil {
+		t.Fatalf("RewriteOperand() error = %v", err)
+	}
+
+	items := rewrittenOperand.(ListOperand).Items
+	if got := items[0].(Ref).Name; got != "role_rewritten" {
+		t.Fatalf("unexpected rewritten list operand: %#v", rewrittenOperand)
+	}
+
+	innerCall, ok := items[1].(Call)
+	if !ok {
+		t.Fatalf("expected rewritten call in operand list, got %T", items[1])
+	}
+
+	if got := innerCall.Args[0].(Ref).Name; got != "status_rewritten" {
+		t.Fatalf("unexpected rewritten nested call: %#v", innerCall)
+	}
+
+	if got := operand.Items[0].(Ref).Name; got != "role" {
+		t.Fatalf("expected RewriteOperand to preserve original list operand, got %#v", operand)
+	}
+
+	wantStop := errors.New("stop rewrite")
+	if _, err := RewriteOperand(operand, func(expr Scalar) (Scalar, error) {
+		if ref, ok := expr.(Ref); ok && ref.Name == "status" {
+			return nil, wantStop
+		}
+		return expr, nil
+	}); !errors.Is(err, wantStop) {
+		t.Fatalf("expected RewriteOperand to propagate rewrite error, got %v", err)
+	}
+
+	originalNegation := Not(F("status").Eq("active"))
+	cloned, err := RewriteExpr(originalNegation, nil)
+	if err != nil {
+		t.Fatalf("RewriteExpr(nil) error = %v", err)
+	}
+
+	clonedNegation, ok := cloned.(Negation)
+	if !ok {
+		t.Fatalf("expected negation clone, got %T", cloned)
+	}
+
+	clonedPredicate := clonedNegation.Expr.(Predicate)
+	clonedPredicate.Left = F("mutated")
+	clonedNegation.Expr = clonedPredicate
+
+	originalPredicate := originalNegation.(Negation).Expr.(Predicate)
+	if got := originalPredicate.Left.(Ref).Name; got != "status" {
+		t.Fatalf("expected RewriteExpr(nil) to clone negation child, got %#v", originalNegation)
 	}
 }
