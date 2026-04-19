@@ -3,4 +3,7 @@
 // It turns JSON documents into qb.Query values and marshals qb.Query values
 // back into ordered JSON using the shared codec model and options from the
 // parent codecs package.
+//
+// The JSON transport is useful when query payloads cross process boundaries or
+// need to preserve typed literal wrappers through JSON documents.
 package json

@@ -5,4 +5,7 @@
 // want to parse it into qb.Query, or when you need to configure field
 // resolvers, value decoders, literal codecs, or codec output mode across the
 // JSON, YAML, and query-string transports.
+//
+// The transport-specific subpackages (`codecs/json`, `codecs/yaml`, and
+// `codecs/qs`) reuse the same option types exported here.
 package codecs
