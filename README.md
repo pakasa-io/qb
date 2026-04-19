@@ -7,6 +7,14 @@ payloads into `qb.Query`, and adapters turn `qb.Query` into backend-specific
 output. The core stays independent from HTTP, JSON, YAML, SQL drivers, and
 ORMs.
 
+## Install
+
+```bash
+go get github.com/pakasa-io/qb@latest
+```
+
+`qb` targets Go `1.24+`.
+
 ## Package Layout
 
 - `qb`: query AST, fluent builder, scalar expressions, projections, rewrites
@@ -30,6 +38,10 @@ See:
 - [docs/specs/CODEC_JSON_ENCODING_SPEC.md](docs/specs/CODEC_JSON_ENCODING_SPEC.md) for the planned JSON output codec
 - [docs/specs/CODEC_YAML_ENCODING_SPEC.md](docs/specs/CODEC_YAML_ENCODING_SPEC.md) for the planned YAML output codec
 - [docs/specs/CODEC_QUERYSTRING_ENCODING_SPEC.md](docs/specs/CODEC_QUERYSTRING_ENCODING_SPEC.md) for the planned query-string output codec
+- [CONTRIBUTING.md](CONTRIBUTING.md) for contribution expectations
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards
+- [SECURITY.md](SECURITY.md) for vulnerability reporting guidance
+- [RELEASING.md](RELEASING.md) for the public Go module release checklist
 
 `adapters/sql` defaults to PostgreSQL v17+ syntax. You can change the process-wide
 default with `sqladapter.SetDefaultDialect(...)` or override it per compiler
@@ -225,3 +237,7 @@ cannot render them cleanly.
 ```bash
 go test ./...
 ```
+
+## License
+
+Released under the [MIT License](LICENSE).
