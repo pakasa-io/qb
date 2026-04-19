@@ -6,7 +6,7 @@ import (
 
 	"github.com/pakasa-io/qb"
 	sqladapter "github.com/pakasa-io/qb/adapters/sql"
-	yamlcodec "github.com/pakasa-io/qb/codecs/yamlcodec"
+	yamlcodec "github.com/pakasa-io/qb/codecs/yaml"
 )
 
 func TestParse(t *testing.T) {

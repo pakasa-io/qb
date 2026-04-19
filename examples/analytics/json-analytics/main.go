@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	sqladapter "github.com/pakasa-io/qb/adapters/sql"
-	jsoncodec "github.com/pakasa-io/qb/codecs/jsoncodec"
+	jsoncodec "github.com/pakasa-io/qb/codecs/json"
 )
 
 func main() {

@@ -9,7 +9,7 @@ import (
 	"github.com/pakasa-io/qb"
 	sqladapter "github.com/pakasa-io/qb/adapters/sql"
 	"github.com/pakasa-io/qb/codecs"
-	jsoncodec "github.com/pakasa-io/qb/codecs/jsoncodec"
+	jsoncodec "github.com/pakasa-io/qb/codecs/json"
 )
 
 type failingLiteralCodec struct{}

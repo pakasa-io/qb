@@ -6,7 +6,7 @@ import (
 
 	"github.com/pakasa-io/qb"
 	"github.com/pakasa-io/qb/codecs"
-	jsoncodec "github.com/pakasa-io/qb/codecs/jsoncodec"
+	jsoncodec "github.com/pakasa-io/qb/codecs/json"
 )
 
 type reversibleStatus string
